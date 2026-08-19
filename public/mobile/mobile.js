@@ -985,7 +985,7 @@ async function captureAndAnalyzeVisionScreen() {
 
   const captureW = remoteVideo.videoWidth;
   const captureH = remoteVideo.videoHeight;
-  const maxDimension = 1280;
+  const maxDimension = 1024;
   let canvasW = captureW;
   let canvasH = captureH;
 
@@ -1003,7 +1003,7 @@ async function captureAndAnalyzeVisionScreen() {
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(remoteVideo, 0, 0, captureW, captureH, 0, 0, canvasW, canvasH);
 
-  const imageData = canvas.toDataURL("image/jpeg", 0.85);
+  const imageData = canvas.toDataURL("image/jpeg", 0.80);
 
   try {
     const response = await fetch("/api/analyze-screen", {

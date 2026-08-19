@@ -777,7 +777,7 @@ app.post("/api/analyze-screen", async (req, res) => {
               type: "image_url",
               image_url: {
                 url: base64Data,
-                detail: "high"
+                detail: "low"
               }
             }
           ]
