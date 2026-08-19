@@ -19,6 +19,7 @@ const stopTypingBtn = document.getElementById("stopTypingBtn");
 
 // AI Ans Vision elements
 const ansBtn = document.getElementById("ansBtn");
+const ansLockIcon = document.getElementById("ansLockIcon");
 const aiAnsBox = document.getElementById("aiAnsBox");
 const aiAnsClose = document.getElementById("aiAnsClose");
 const aiAnsLoading = document.getElementById("aiAnsLoading");
@@ -27,6 +28,8 @@ const aiAnsCopy = document.getElementById("aiAnsCopy");
 const aiAnsRefresh = document.getElementById("aiAnsRefresh");
 
 // State variables
+let userPlan = "basic"; // 'pro', 'trial', or 'basic'
+let userEmail = "";
 let micEnabled = false;
 let cameraEnabled = false;
 let dragMode = false;
@@ -171,6 +174,11 @@ async function connectSignaling() {
       return;
     }
     if (msg.type === "peer" && msg.payload && typeof msg.payload.event === "string") {
+      if (msg.payload.plan) {
+        userPlan = String(msg.payload.plan).toLowerCase();
+        if (msg.payload.email) userEmail = msg.payload.email;
+        updateAnsButtonState();
+      }
       if (msg.payload.event === "desktop-online") setStatus("Desktop online. Waiting for stream…");
       if (msg.payload.event === "desktop-offline") setStatus("Desktop app not connected.");
       if (msg.payload.event === "capture-failed") setStatus(`Desktop capture failed: ${msg.payload.message || ""}`.trim());
@@ -919,7 +927,50 @@ snapCloseResult.addEventListener("click", () => {
 });
 
 // ===== AI ANS VISION SCREEN ANALYSIS =====
+function isProPlan() {
+  return userPlan === "pro";
+}
+
+function updateAnsButtonState() {
+  if (!ansBtn) return;
+  if (isProPlan()) {
+    ansBtn.classList.remove("locked");
+    if (ansLockIcon) ansLockIcon.textContent = "💡";
+    ansBtn.title = "AI Screen Analysis (GPT-4o-mini Vision)";
+  } else {
+    ansBtn.classList.add("locked");
+    if (ansLockIcon) ansLockIcon.textContent = "🔒";
+    ansBtn.title = "AI Screen Analysis (PRO Plan Only)";
+  }
+}
+
 async function captureAndAnalyzeVisionScreen() {
+  // If user is on trial or basic plan, do not call backend endpoint - show locked upgrade UI
+  if (!isProPlan()) {
+    if (aiAnsBox) aiAnsBox.hidden = false;
+    if (aiAnsLoading) aiAnsLoading.hidden = true;
+    if (aiAnsText) {
+      aiAnsText.innerHTML = `
+        <div style="text-align: center; padding: 10px 0;">
+          <div style="font-size: 32px; margin-bottom: 8px;">🔒</div>
+          <div style="font-weight: 700; font-size: 16px; color: #f59e0b; margin-bottom: 6px;">PRO Feature Locked</div>
+          <p style="color: #cbd5e1; font-size: 13.5px; line-height: 1.5; margin: 0 0 12px 0;">
+            Real-time AI Vision Screen Analysis (powered by GPT-4o-mini) is exclusively available on the <strong>PRO plan</strong>.
+          </p>
+          <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 8px; font-size: 12.5px; color: #fbbf24;">
+            Current Plan: <strong>${userPlan.toUpperCase()}</strong>
+          </div>
+        </div>
+      `;
+    }
+    if (aiAnsRefresh) aiAnsRefresh.style.display = "none";
+    if (aiAnsCopy) aiAnsCopy.style.display = "none";
+    return;
+  }
+
+  if (aiAnsRefresh) aiAnsRefresh.style.display = "";
+  if (aiAnsCopy) aiAnsCopy.style.display = "";
+
   if (!remoteVideo.videoWidth || !remoteVideo.videoHeight) {
     setStatus("Error: Video not ready");
     return;
@@ -958,12 +1009,17 @@ async function captureAndAnalyzeVisionScreen() {
     const response = await fetch("/api/analyze-screen", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image: imageData })
+      body: JSON.stringify({ image: imageData, token: getToken(), email: userEmail })
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Server error (${response.status}): ${errorText}`);
+      const errJson = await response.json().catch(() => ({}));
+      if (response.status === 403 && errJson.error === "pro-required") {
+        userPlan = "basic";
+        updateAnsButtonState();
+        throw new Error(errJson.message || "PRO plan required.");
+      }
+      throw new Error(errJson.error || `Server error (${response.status})`);
     }
 
     const result = await response.json();
@@ -984,6 +1040,24 @@ async function captureAndAnalyzeVisionScreen() {
     if (ansBtn) ansBtn.classList.remove("active");
   }
 }
+
+// Initial state
+updateAnsButtonState();
+
+// Fetch initial plan status from server
+(async function checkInitialPlan() {
+  const token = getToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/link/status?token=${encodeURIComponent(token)}`);
+    const data = await res.json();
+    if (data.ok && data.plan) {
+      userPlan = String(data.plan).toLowerCase();
+      if (data.email) userEmail = data.email;
+      updateAnsButtonState();
+    }
+  } catch {}
+})();
 
 if (ansBtn) {
   ansBtn.addEventListener("click", () => {

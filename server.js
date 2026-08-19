@@ -722,12 +722,29 @@ Examples:
   }
 });
 
-// Screen Analysis Endpoint (GPT-4o-mini Vision)
+// Screen Analysis Endpoint (GPT-4o-mini Vision) - Gated to PRO plan only
 app.post("/api/analyze-screen", async (req, res) => {
-  const { image, prompt } = req.body || {};
+  const { image, prompt, token, email } = req.body || {};
 
   if (!image || typeof image !== "string") {
     return res.status(400).json({ ok: false, error: "missing-image" });
+  }
+
+  // Plan verification: check if pro
+  let userPlan = "basic";
+  if (token && linkStates.has(token)) {
+    userPlan = (linkStates.get(token)?.plan || "basic").toLowerCase();
+  } else if (email) {
+    const profile = await fetchProfileByEmail(email);
+    if (profile) userPlan = (profile.plan || "basic").toLowerCase();
+  }
+
+  if (userPlan !== "pro") {
+    return res.status(403).json({
+      ok: false,
+      error: "pro-required",
+      message: "AI Screen Analysis is only available on the PRO plan. Please upgrade to unlock."
+    });
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
@@ -842,9 +859,12 @@ wss.on("connection", (ws, req) => {
         }
         session.desktopSocket = ws;
         console.log(`[Hello] Desktop socket stored, mobile exists: ${!!session.mobileSocket}`);
+        const linkInfo = linkStates.get(token);
+        const desktopPlan = linkInfo?.plan || "basic";
+        const desktopEmail = linkInfo?.email || "";
         if (isOpen(session.mobileSocket)) {
           try {
-            session.mobileSocket.send(JSON.stringify({ type: "peer", payload: { event: "desktop-online" } }));
+            session.mobileSocket.send(JSON.stringify({ type: "peer", payload: { event: "desktop-online", plan: desktopPlan, email: desktopEmail } }));
           } catch {}
           try {
             ws.send(JSON.stringify({ type: "peer", payload: { event: "mobile-online" } }));
@@ -871,16 +891,19 @@ wss.on("connection", (ws, req) => {
         }
         session.mobileSocket = ws;
         console.log(`[Hello] Mobile socket stored, desktop exists: ${!!session.desktopSocket}`);
+        const linkInfoMobile = linkStates.get(token);
+        const currentDesktopPlan = linkInfoMobile?.plan || "basic";
+        const currentDesktopEmail = linkInfoMobile?.email || "";
         if (isOpen(session.desktopSocket)) {
           try {
             session.desktopSocket.send(JSON.stringify({ type: "peer", payload: { event: "mobile-online" } }));
           } catch {}
           try {
-            ws.send(JSON.stringify({ type: "peer", payload: { event: "desktop-online" } }));
+            ws.send(JSON.stringify({ type: "peer", payload: { event: "desktop-online", plan: currentDesktopPlan, email: currentDesktopEmail } }));
           } catch {}
         } else {
           try {
-            ws.send(JSON.stringify({ type: "peer", payload: { event: "desktop-offline" } }));
+            ws.send(JSON.stringify({ type: "peer", payload: { event: "desktop-offline", plan: currentDesktopPlan, email: currentDesktopEmail } }));
           } catch {}
         }
         return;
