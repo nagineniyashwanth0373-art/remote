@@ -19,7 +19,6 @@ const stopTypingBtn = document.getElementById("stopTypingBtn");
 
 // AI Ans Vision elements
 const ansBtn = document.getElementById("ansBtn");
-const ansLockIcon = document.getElementById("ansLockIcon");
 const aiAnsBox = document.getElementById("aiAnsBox");
 const aiAnsClose = document.getElementById("aiAnsClose");
 const aiAnsLoading = document.getElementById("aiAnsLoading");
@@ -28,8 +27,6 @@ const aiAnsCopy = document.getElementById("aiAnsCopy");
 const aiAnsRefresh = document.getElementById("aiAnsRefresh");
 
 // State variables
-let userPlan = "basic"; // 'pro', 'trial', or 'basic'
-let userEmail = "";
 let micEnabled = false;
 let cameraEnabled = false;
 let dragMode = false;
@@ -37,6 +34,31 @@ let scrollMode = false;
 let typeMode = false;
 let snapMode = false;
 let lastExtractedText = ""; // Store last OCR text
+
+function getInitialPlan() {
+  const url = new URL(location.href);
+  const p = (url.searchParams.get("plan") || "").trim().toLowerCase();
+  return p || "basic";
+}
+
+let clientPlan = getInitialPlan();
+
+function isProPlan() {
+  return clientPlan === "pro" || clientPlan === "premium" || clientPlan === "enterprise";
+}
+
+function updateAnsBtnAppearance() {
+  if (!ansBtn) return;
+  if (isProPlan()) {
+    ansBtn.innerHTML = "Ans 💡";
+    ansBtn.classList.remove("locked-tool");
+    ansBtn.title = "AI Screen Analysis (Pro)";
+  } else {
+    ansBtn.innerHTML = "Ans 🔒";
+    ansBtn.classList.add("locked-tool");
+    ansBtn.title = "Ans is a Pro feature (Locked on Trial/Basic)";
+  }
+}
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -174,12 +196,13 @@ async function connectSignaling() {
       return;
     }
     if (msg.type === "peer" && msg.payload && typeof msg.payload.event === "string") {
-      if (msg.payload.plan) {
-        userPlan = String(msg.payload.plan).toLowerCase();
-        if (msg.payload.email) userEmail = msg.payload.email;
-        updateAnsButtonState();
+      if (msg.payload.event === "desktop-online") {
+        if (msg.payload.plan) {
+          clientPlan = String(msg.payload.plan).trim().toLowerCase();
+          updateAnsBtnAppearance();
+        }
+        setStatus("Desktop online. Waiting for stream…");
       }
-      if (msg.payload.event === "desktop-online") setStatus("Desktop online. Waiting for stream…");
       if (msg.payload.event === "desktop-offline") setStatus("Desktop app not connected.");
       if (msg.payload.event === "capture-failed") setStatus(`Desktop capture failed: ${msg.payload.message || ""}`.trim());
       if (msg.payload.event === "capture-restart") setStatus("Reconnecting stream…");
@@ -927,52 +950,28 @@ snapCloseResult.addEventListener("click", () => {
 });
 
 // ===== AI ANS VISION SCREEN ANALYSIS =====
-function isProPlan() {
-  const p = String(userPlan || "").trim().toLowerCase();
-  return p === "pro" || p === "enterprise" || p === "paid";
-}
-
-function updateAnsButtonState() {
-  if (!ansBtn) return;
-  if (isProPlan()) {
-    ansBtn.classList.remove("locked");
-    if (ansLockIcon) ansLockIcon.textContent = "💡";
-    ansBtn.title = "AI Screen Analysis (GPT-4o-mini Vision)";
-  } else {
-    ansBtn.classList.add("locked");
-    if (ansLockIcon) ansLockIcon.textContent = "🔒";
-    ansBtn.title = "AI Screen Analysis (PRO Plan Only)";
-  }
-}
-
 async function captureAndAnalyzeVisionScreen() {
-  console.log("[Ans] captureAndAnalyzeVisionScreen called. Current plan:", userPlan, "isPro:", isProPlan());
-
-  // If user is on trial or basic plan, do not call backend endpoint - show locked upgrade UI
   if (!isProPlan()) {
+    // Show Locked modal explaining that Ans is exclusively on Pro plan
     if (aiAnsBox) aiAnsBox.hidden = false;
     if (aiAnsLoading) aiAnsLoading.hidden = true;
     if (aiAnsText) {
       aiAnsText.innerHTML = `
         <div style="text-align: center; padding: 10px 0;">
           <div style="font-size: 32px; margin-bottom: 8px;">🔒</div>
-          <div style="font-weight: 700; font-size: 16px; color: #f59e0b; margin-bottom: 6px;">PRO Feature Locked</div>
-          <p style="color: #cbd5e1; font-size: 13.5px; line-height: 1.5; margin: 0 0 12px 0;">
-            Real-time AI Vision Screen Analysis (powered by GPT-4o-mini) is exclusively available on the <strong>PRO plan</strong>.
+          <strong style="color: #f59e0b; font-size: 16px;">Pro Feature Only</strong>
+          <p style="margin-top: 10px; color: #cbd5e1; font-size: 13.5px; line-height: 1.5;">
+            The <strong>Ans (AI Screen Analysis)</strong> feature is available exclusively on the <strong>Pro Plan</strong>.
           </p>
-          <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 8px; font-size: 12.5px; color: #fbbf24;">
-            Current Plan: <strong>${(userPlan || "basic").toUpperCase()}</strong>
-          </div>
+          <p style="color: #94a3b8; font-size: 12.5px; margin-top: 6px;">
+            Upgrade your account to Pro to unlock real-time GPT-4o-mini screen answers, comprehensive analysis, and automated fixes.
+          </p>
         </div>
       `;
     }
-    if (aiAnsRefresh) aiAnsRefresh.style.display = "none";
-    if (aiAnsCopy) aiAnsCopy.style.display = "none";
+    setStatus("Ans is available on Pro Plan only");
     return;
   }
-
-  if (aiAnsRefresh) aiAnsRefresh.style.display = "";
-  if (aiAnsCopy) aiAnsCopy.style.display = "";
 
   if (!remoteVideo.videoWidth || !remoteVideo.videoHeight) {
     setStatus("Error: Video not ready");
@@ -988,7 +987,7 @@ async function captureAndAnalyzeVisionScreen() {
 
   const captureW = remoteVideo.videoWidth;
   const captureH = remoteVideo.videoHeight;
-  const maxDimension = 1024;
+  const maxDimension = 1280;
   let canvasW = captureW;
   let canvasH = captureH;
 
@@ -1006,23 +1005,18 @@ async function captureAndAnalyzeVisionScreen() {
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(remoteVideo, 0, 0, captureW, captureH, 0, 0, canvasW, canvasH);
 
-  const imageData = canvas.toDataURL("image/jpeg", 0.80);
+  const imageData = canvas.toDataURL("image/jpeg", 0.85);
 
   try {
     const response = await fetch("/api/analyze-screen", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image: imageData, token: getToken(), email: userEmail })
+      body: JSON.stringify({ image: imageData })
     });
 
     if (!response.ok) {
-      const errJson = await response.json().catch(() => ({}));
-      if (response.status === 403 && errJson.error === "pro-required") {
-        userPlan = "basic";
-        updateAnsButtonState();
-        throw new Error(errJson.message || "PRO plan required.");
-      }
-      throw new Error(errJson.error || `Server error (${response.status})`);
+      const errorText = await response.text();
+      throw new Error(`Server error (${response.status}): ${errorText}`);
     }
 
     const result = await response.json();
@@ -1043,29 +1037,6 @@ async function captureAndAnalyzeVisionScreen() {
     if (ansBtn) ansBtn.classList.remove("active");
   }
 }
-
-// Initial state
-updateAnsButtonState();
-
-// Fetch initial plan status from server with retry
-async function checkInitialPlan() {
-  const token = getToken();
-  if (!token) return;
-  try {
-    const res = await fetch(`/api/link/status?token=${encodeURIComponent(token)}`);
-    const data = await res.json();
-    if (data.ok && data.plan) {
-      userPlan = String(data.plan).toLowerCase();
-      if (data.email) userEmail = data.email;
-      console.log("[Mobile] Initial plan resolved:", userPlan, "email:", userEmail);
-      updateAnsButtonState();
-    }
-  } catch {}
-}
-
-checkInitialPlan();
-// Retry check in 2 seconds in case desktop linked late
-setTimeout(checkInitialPlan, 2000);
 
 if (ansBtn) {
   ansBtn.addEventListener("click", () => {
@@ -1098,4 +1069,5 @@ if (aiAnsCopy) {
   });
 }
 
+updateAnsBtnAppearance();
 connectSignaling();

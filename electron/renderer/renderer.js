@@ -1222,11 +1222,10 @@ function connectSignaling() {
     wsReconnectDelayMs = 500;
     setPill(desktopStatus, true, "Desktop: online");
     setPill(mobileStatus, false, "Controller: offline");
+    const plan = (currentAccount && currentAccount.plan) || "basic";
     try {
-      const desktopPlan = (sessionInfo && sessionInfo.plan) || "basic";
-      const desktopEmail = (sessionInfo && sessionInfo.email) || "";
-      ws.send(JSON.stringify({ type: "hello", role: "desktop", plan: desktopPlan, email: desktopEmail }));
-      ws.send(JSON.stringify({ type: "peer", target: "mobile", payload: { event: "desktop-online", plan: desktopPlan, email: desktopEmail } }));
+      ws.send(JSON.stringify({ type: "hello", role: "desktop", plan }));
+      ws.send(JSON.stringify({ type: "peer", target: "mobile", payload: { event: "desktop-online", plan } }));
     } catch {}
   });
 
