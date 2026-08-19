@@ -1,8 +1,0 @@
-{
-  "rewrites": [
-    { "source": "/", "destination": "/m/" },
-    { "source": "/m", "destination": "/mobile/index.html" },
-    { "source": "/m/", "destination": "/mobile/index.html" },
-    { "source": "/m/:path*", "destination": "/mobile/:path*" }
-  ]
-}
