@@ -928,7 +928,8 @@ snapCloseResult.addEventListener("click", () => {
 
 // ===== AI ANS VISION SCREEN ANALYSIS =====
 function isProPlan() {
-  return userPlan === "pro";
+  const p = String(userPlan || "").trim().toLowerCase();
+  return p === "pro" || p === "enterprise" || p === "paid";
 }
 
 function updateAnsButtonState() {
@@ -945,6 +946,8 @@ function updateAnsButtonState() {
 }
 
 async function captureAndAnalyzeVisionScreen() {
+  console.log("[Ans] captureAndAnalyzeVisionScreen called. Current plan:", userPlan, "isPro:", isProPlan());
+
   // If user is on trial or basic plan, do not call backend endpoint - show locked upgrade UI
   if (!isProPlan()) {
     if (aiAnsBox) aiAnsBox.hidden = false;
@@ -958,7 +961,7 @@ async function captureAndAnalyzeVisionScreen() {
             Real-time AI Vision Screen Analysis (powered by GPT-4o-mini) is exclusively available on the <strong>PRO plan</strong>.
           </p>
           <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 8px; font-size: 12.5px; color: #fbbf24;">
-            Current Plan: <strong>${userPlan.toUpperCase()}</strong>
+            Current Plan: <strong>${(userPlan || "basic").toUpperCase()}</strong>
           </div>
         </div>
       `;
@@ -1044,8 +1047,8 @@ async function captureAndAnalyzeVisionScreen() {
 // Initial state
 updateAnsButtonState();
 
-// Fetch initial plan status from server
-(async function checkInitialPlan() {
+// Fetch initial plan status from server with retry
+async function checkInitialPlan() {
   const token = getToken();
   if (!token) return;
   try {
@@ -1054,10 +1057,15 @@ updateAnsButtonState();
     if (data.ok && data.plan) {
       userPlan = String(data.plan).toLowerCase();
       if (data.email) userEmail = data.email;
+      console.log("[Mobile] Initial plan resolved:", userPlan, "email:", userEmail);
       updateAnsButtonState();
     }
   } catch {}
-})();
+}
+
+checkInitialPlan();
+// Retry check in 2 seconds in case desktop linked late
+setTimeout(checkInitialPlan, 2000);
 
 if (ansBtn) {
   ansBtn.addEventListener("click", () => {

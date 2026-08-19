@@ -859,9 +859,21 @@ wss.on("connection", (ws, req) => {
         }
         session.desktopSocket = ws;
         console.log(`[Hello] Desktop socket stored, mobile exists: ${!!session.mobileSocket}`);
+        
+        // If desktop passed plan/email, update linkStates
+        if (msg.plan || msg.email) {
+          const prev = linkStates.get(token) || {};
+          linkStates.set(token, {
+            ...prev,
+            plan: (msg.plan || prev.plan || "basic").toLowerCase(),
+            email: msg.email || prev.email || "",
+            updatedAt: Date.now()
+          });
+        }
+
         const linkInfo = linkStates.get(token);
-        const desktopPlan = linkInfo?.plan || "basic";
-        const desktopEmail = linkInfo?.email || "";
+        const desktopPlan = linkInfo?.plan || (msg.plan || "basic").toLowerCase();
+        const desktopEmail = linkInfo?.email || msg.email || "";
         if (isOpen(session.mobileSocket)) {
           try {
             session.mobileSocket.send(JSON.stringify({ type: "peer", payload: { event: "desktop-online", plan: desktopPlan, email: desktopEmail } }));

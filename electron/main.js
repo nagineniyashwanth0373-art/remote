@@ -1342,9 +1342,13 @@ ipcMain.handle("get-session-info", async () => {
   const mobileUrl = await getMobileUrl();
   const desktopUrl = await getDesktopUrl();
   const wsUrl = await getWsUrl();
+  const plan = getCurrentPlan();
+  const acc = loadStoredAccount();
   return {
     token: serverState.session.token,
     expiresAt: serverState.session.expiresAt,
+    plan: plan || "basic",
+    email: acc?.email || "",
     mobileUrl,
     qrDataUrl: await qrcode.toDataURL(mobileUrl, { errorCorrectionLevel: "M", margin: 1, scale: 8 }),
     desktopUrl,
