@@ -17,6 +17,15 @@ const snapResultContent = document.getElementById("snapResultContent");
 const snapCloseResult = document.getElementById("snapCloseResult");
 const stopTypingBtn = document.getElementById("stopTypingBtn");
 
+// AI Ans Vision elements
+const ansBtn = document.getElementById("ansBtn");
+const aiAnsBox = document.getElementById("aiAnsBox");
+const aiAnsClose = document.getElementById("aiAnsClose");
+const aiAnsLoading = document.getElementById("aiAnsLoading");
+const aiAnsText = document.getElementById("aiAnsText");
+const aiAnsCopy = document.getElementById("aiAnsCopy");
+const aiAnsRefresh = document.getElementById("aiAnsRefresh");
+
 // State variables
 let micEnabled = false;
 let cameraEnabled = false;
@@ -908,5 +917,103 @@ function hideSnapOverlay() {
 snapCloseResult.addEventListener("click", () => {
   snapResult.hidden = true;
 });
+
+// ===== AI ANS VISION SCREEN ANALYSIS =====
+async function captureAndAnalyzeVisionScreen() {
+  if (!remoteVideo.videoWidth || !remoteVideo.videoHeight) {
+    setStatus("Error: Video not ready");
+    return;
+  }
+
+  // Show AI Ans box and loading spinner
+  if (aiAnsBox) aiAnsBox.hidden = false;
+  if (aiAnsLoading) aiAnsLoading.hidden = false;
+  if (aiAnsText) aiAnsText.textContent = "";
+  if (ansBtn) ansBtn.classList.add("active");
+  setStatus("Analyzing screen with GPT-4o-mini...");
+
+  const captureW = remoteVideo.videoWidth;
+  const captureH = remoteVideo.videoHeight;
+  const maxDimension = 1280;
+  let canvasW = captureW;
+  let canvasH = captureH;
+
+  if (captureW > maxDimension || captureH > maxDimension) {
+    const ratio = Math.min(maxDimension / captureW, maxDimension / captureH);
+    canvasW = Math.round(captureW * ratio);
+    canvasH = Math.round(captureH * ratio);
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = canvasW;
+  canvas.height = canvasH;
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(remoteVideo, 0, 0, captureW, captureH, 0, 0, canvasW, canvasH);
+
+  const imageData = canvas.toDataURL("image/jpeg", 0.85);
+
+  try {
+    const response = await fetch("/api/analyze-screen", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: imageData })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Server error (${response.status}): ${errorText}`);
+    }
+
+    const result = await response.json();
+    if (aiAnsLoading) aiAnsLoading.hidden = true;
+
+    if (result.ok && result.answer) {
+      if (aiAnsText) aiAnsText.textContent = result.answer;
+      setStatus("Screen analysis ready");
+    } else {
+      if (aiAnsText) aiAnsText.textContent = "Analysis error: " + (result.error || "Unknown error");
+      setStatus("Analysis failed");
+    }
+  } catch (err) {
+    if (aiAnsLoading) aiAnsLoading.hidden = true;
+    if (aiAnsText) aiAnsText.textContent = "Error: " + err.message;
+    setStatus("Analysis request failed");
+  } finally {
+    if (ansBtn) ansBtn.classList.remove("active");
+  }
+}
+
+if (ansBtn) {
+  ansBtn.addEventListener("click", () => {
+    captureAndAnalyzeVisionScreen();
+  });
+}
+
+if (aiAnsRefresh) {
+  aiAnsRefresh.addEventListener("click", () => {
+    captureAndAnalyzeVisionScreen();
+  });
+}
+
+if (aiAnsClose) {
+  aiAnsClose.addEventListener("click", () => {
+    if (aiAnsBox) aiAnsBox.hidden = true;
+  });
+}
+
+if (aiAnsCopy) {
+  aiAnsCopy.addEventListener("click", () => {
+    if (aiAnsText && aiAnsText.textContent) {
+      navigator.clipboard.writeText(aiAnsText.textContent);
+      const originalText = aiAnsCopy.textContent;
+      aiAnsCopy.textContent = "Copied!";
+      setTimeout(() => {
+        aiAnsCopy.textContent = originalText;
+      }, 2000);
+    }
+  });
+}
 
 connectSignaling();

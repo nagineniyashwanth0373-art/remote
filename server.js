@@ -722,6 +722,63 @@ Examples:
   }
 });
 
+// Screen Analysis Endpoint (GPT-4o-mini Vision)
+app.post("/api/analyze-screen", async (req, res) => {
+  const { image, prompt } = req.body || {};
+
+  if (!image || typeof image !== "string") {
+    return res.status(400).json({ ok: false, error: "missing-image" });
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({
+      ok: false,
+      error: "OpenAI API key not configured on server (please set OPENAI_API_KEY in Railway)."
+    });
+  }
+
+  try {
+    console.log("[Analyze-Screen] Sending screen to GPT-4o-mini Vision...");
+    const base64Data = image.startsWith("data:") ? image : `data:image/jpeg;base64,${image}`;
+    const userPrompt = prompt && typeof prompt === "string" && prompt.trim().length > 0
+      ? prompt.trim()
+      : "Analyze what is shown on this screen. If there is a question, coding problem, error, or prompt, provide the exact direct answer/solution first, followed by a concise 1-2 sentence explanation. If it is general content, explain key elements concisely.";
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "You are an expert AI assistant analyzing a remote desktop screen in real-time. Give accurate, direct, and concise answers."
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: userPrompt },
+            {
+              type: "image_url",
+              image_url: {
+                url: base64Data,
+                detail: "high"
+              }
+            }
+          ]
+        }
+      ],
+      max_tokens: 500,
+      temperature: 0.2,
+    });
+
+    const aiAnswer = completion.choices[0]?.message?.content?.trim() || "No answer generated.";
+    console.log("[Analyze-Screen] AI response received:", aiAnswer.substring(0, 100));
+    res.json({ ok: true, answer: aiAnswer });
+  } catch (err) {
+    console.error("[Analyze-Screen] Error:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 const httpServer = http.createServer(app);
 const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 

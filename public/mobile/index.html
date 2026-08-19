@@ -28,12 +28,32 @@
         <button id="scrollBtn" class="tool">Scroll</button>
         <button id="typeBtn" class="tool">Type</button>
         <button id="snapBtn" class="tool">Snap</button>
+        <button id="ansBtn" class="tool ans-tool">Ans 💡</button>
       </div>
       
       <!-- Snap result display -->
       <div id="snapResult" hidden>
         <div id="snapResultContent"></div>
         <button id="snapCloseResult">Close</button>
+      </div>
+
+      <!-- AI Ans Vision Screen Analysis Box -->
+      <div id="aiAnsBox" class="ai-ans-box" hidden>
+        <div class="ai-ans-header">
+          <div class="ai-ans-title"><span>✨</span> AI Screen Analysis</div>
+          <button id="aiAnsClose" class="ai-ans-close">&times;</button>
+        </div>
+        <div class="ai-ans-body">
+          <div id="aiAnsLoading" class="ai-ans-loading" hidden>
+            <div class="ai-spinner"></div>
+            <span>Analyzing screen with GPT-4o-mini...</span>
+          </div>
+          <div id="aiAnsText" class="ai-ans-text"></div>
+        </div>
+        <div class="ai-ans-actions">
+          <button id="aiAnsCopy" class="ai-btn-secondary">Copy</button>
+          <button id="aiAnsRefresh" class="ai-btn-primary">Re-analyze</button>
+        </div>
       </div>
     </div>
 
