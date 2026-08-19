@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <title>Emergency Control</title>
+    <link rel="stylesheet" href="/mobile/style.css" />
+  </head>
+  <body>
+    <div id="topbar">
+      <div id="status">Connecting…</div>
+      <div style="display: flex; gap: 8px">
+        <button id="fsToggle">Full</button>
+        <button id="disconnectBtn">Disconnect</button>
+      </div>
+    </div>
+
+    <div id="stage">
+      <video id="remoteVideo" autoplay muted playsinline></video>
+      <div id="touchLayer"></div>
+      <button id="controlsToggle" type="button" hidden>Controls</button>
+      <div id="targetOverlay" hidden>
+        <div id="targetCursor"></div>
+      </div>
+      <div id="targetActions" hidden>
+        <button id="targetLeft">L-Click</button>
+        <button id="targetRight">R-Click</button>
+        <button id="targetCancel">Cancel</button>
+      </div>
+      <div id="hud">
+        <button id="clickBtn" class="tool">Click</button>
+        <button id="scrollBtn" class="tool">Scroll</button>
+        <button id="dragViewBtn" class="tool">Drag</button>
+        <button id="kbToggle" class="tool">Type</button>
+      </div>
+    </div>
+
+    <div id="keyboardSheet" hidden>
+      <div class="sheetRow" style="display: flex; gap: 10px; align-items: center;">
+        <input id="textInput" placeholder="Type here…" autocomplete="off" autocapitalize="off" spellcheck="false" style="flex: 1;" />
+        <button id="kbDoneBtn">Done</button>
+      </div>
+    </div>
+
+    <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.20.0.js"></script>
+    <script src="https://unpkg.com/@daily-co/daily-js"></script>
+    <script src="/mobile/mobile.js"></script>
+  </body>
+</html>

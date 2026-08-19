@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>Emergency Control</title>
+    <link rel="stylesheet" href="./style.css?v=6" />
+  </head>
+  <body>
+    <div id="topbar">
+      <div id="status">Connecting…</div>
+      <div style="display: flex; gap: 8px">
+        <button id="micToggle" class="top-btn" title="Toggle Microphone">🎤</button>
+        <button id="cameraToggle" class="top-btn" title="Toggle Camera">📷</button>
+        <button id="fsToggle">Full</button>
+        <button id="disconnectBtn">Disconnect</button>
+      </div>
+    </div>
+
+    <div id="stage">
+      <video id="remoteVideo" autoplay muted playsinline></video>
+      <div id="touchLayer"></div>
+      <div id="hud">
+        <button id="dragBtn" class="tool">Drag</button>
+        <button id="scrollBtn" class="tool">Scroll</button>
+        <button id="typeBtn" class="tool">Type</button>
+        <button id="snapBtn" class="tool">Snap</button>
+      </div>
+      
+      <!-- Snap result display -->
+      <div id="snapResult" hidden>
+        <div id="snapResultContent"></div>
+        <button id="snapCloseResult">Close</button>
+      </div>
+    </div>
+
+    <div id="typeSheet" hidden>
+      <div class="sheetRow">
+        <textarea id="typeInput" placeholder="Type here…" autocomplete="off" autocapitalize="off" spellcheck="false" rows="3"></textarea>
+      </div>
+      <div class="sheetRow" style="margin-top: 8px;">
+        <button id="stopTypingBtn" class="tool" style="width: 100%; background: #ef4444;">Stop Typing</button>
+      </div>
+    </div>
+
+    <script src="./mobile.js?v=25"></script>
+  </body>
+</html>

@@ -1,0 +1,60 @@
+{
+  "name": "emergency-desktop-control-bridge",
+  "version": "0.1.0",
+  "description": "Emergency Remote Control Desktop App",
+  "author": "User",
+  "private": true,
+  "main": "electron/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "lint": "node -c electron/main.js && node -c electron/preload.js && node -c electron/renderer/renderer.js && node -c public/mobile/mobile.js && node -c server.js",
+    "railway": "node server.js",
+    "build": "echo 'No build necessary for server'",
+    "build:app": "electron-builder"
+  },
+  "build": {
+    "appId": "com.security.remotecontrol",
+    "productName": "Helvia Remote",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "public/**/*",
+      ".env",
+      "package.json",
+      "ChatGPT Image Feb 17, 2026, 11_46_32 AM.png"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "ChatGPT Image Feb 17, 2026, 11_46_32 AM.png",
+      "requestedExecutionLevel": "requireAdministrator"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.95.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "openai": "^6.29.0",
+    "qrcode": "^1.5.4",
+    "sharp": "^0.34.5",
+    "tesseract.js": "^7.0.0",
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "robotjs": "^0.6.0"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^26.7.0"
+  }
+}

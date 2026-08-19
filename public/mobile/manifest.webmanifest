@@ -1,0 +1,15 @@
+{
+  "name": "Helvia Remote",
+  "short_name": "Helvia",
+  "start_url": "/m/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/ChatGPT Image Feb 17, 2026, 11_46_32 AM.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
