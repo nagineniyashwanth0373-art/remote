@@ -567,31 +567,52 @@ typeInput.addEventListener("keyup", (e) => {
   }
 });
 
-// Stop typing button - interrupt paste typing immediately
+// Stop typing button - interrupt paste typing immediately and close sheet
 if (stopTypingBtn) {
-  stopTypingBtn.addEventListener("click", () => {
-    if (isTyping) {
-      // Clear the queue immediately
-      typingQueue = [];
-      isTyping = false;
-      typingJustInterrupted = true;
-      interruptKeyChar = null;
-      
-      // Clear any pending timeouts
-      if (charDelayTimeout) {
-        clearTimeout(charDelayTimeout);
-        charDelayTimeout = null;
-      }
-      
-      setStatus("Typing stopped");
-      console.log("[Type] Stopped by button - queue cleared");
-      
-      // Reset flag after delay
-      setTimeout(() => { 
-        typingJustInterrupted = false; 
-      }, 300);
+  const handleStopTyping = (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
     }
-  });
+    
+    // 1. Immediately cancel active typing loop and queue
+    isTyping = false;
+    typingQueue = [];
+    typingJustInterrupted = true;
+    interruptKeyChar = null;
+    
+    // 2. Clear all pending timeouts
+    if (charDelayTimeout) {
+      clearTimeout(charDelayTimeout);
+      charDelayTimeout = null;
+    }
+    if (clearInputTimeout) {
+      clearTimeout(clearInputTimeout);
+      clearInputTimeout = null;
+    }
+
+    // 3. Clear text input value
+    if (typeInput) {
+      typeInput.value = "";
+      lastInputValue = "";
+      typeInput.blur(); // Dismiss mobile on-screen keyboard
+    }
+
+    // 4. Hide type sheet and reset type button state
+    typeMode = false;
+    typeBtn.classList.remove("active");
+    typeSheet.hidden = true;
+
+    setStatus("Typing stopped");
+    console.log("[Type] Stopped immediately by button");
+
+    setTimeout(() => { 
+      typingJustInterrupted = false; 
+    }, 200);
+  };
+
+  stopTypingBtn.addEventListener("click", handleStopTyping);
+  stopTypingBtn.addEventListener("touchstart", handleStopTyping, { passive: false });
 }
 
 fsToggle.addEventListener("click", async () => {
