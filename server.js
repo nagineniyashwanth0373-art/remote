@@ -734,47 +734,95 @@ app.post("/api/analyze-screen", async (req, res) => {
   }
 
   try {
-    console.log("[Analyze-Screen] Processing screen vision...");
+    console.log("[Analyze-Screen] Step 1: Transcribing screen text...");
     const base64Data = image.startsWith("data:") ? image : `data:image/jpeg;base64,${image}`;
-    const userPrompt = prompt && typeof prompt === "string" && prompt.trim().length > 0
-      ? prompt.trim()
-      : `You are answering a multiple-choice exam question.
-Step 1: Read the question and all options (A, B, C, D) carefully.
-Step 2: Solve the problem step-by-step to find the mathematically/logically correct answer.
-Step 3: Select the exact matching option letter.
-Step 4: Output ONLY:
-🎯 **Option [Letter]: [Exact Option Value/Text]**
-💡 **Reason:** [1 brief sentence showing calculation/fact]
 
-Do NOT output any other sections, do NOT output contradictory numbers.`;
-
-    const completion = await openai.chat.completions.create({
+    // Step 1: Extract all text, question, and options from the image
+    const ocrResponse = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: "You are a professional competitive exam solver. You MUST calculate and verify the problem before outputting. Output ONLY the correct option letter (A, B, C, D) and its value, followed by a 1-sentence reason. Never output draft headers, never output incorrect initial guesses."
+          content: "You are a precise screen OCR reader. Transcribe the main question, problem statement, and all available options (A, B, C, D, etc.) exactly as shown on the screen. Output only the transcribed text."
         },
         {
           role: "user",
           content: [
-            { type: "text", text: userPrompt },
+            { type: "text", text: "Transcribe the question, math/code, and all options verbatim from this screenshot." },
             {
               type: "image_url",
               image_url: {
                 url: base64Data,
-                detail: "high"
+                detail: "low"
               }
             }
           ]
         }
       ],
-      max_tokens: 150,
+      max_tokens: 300,
       temperature: 0.0,
     });
 
-    const aiAnswer = completion.choices[0]?.message?.content?.trim() || "No answer generated.";
-    console.log("[Analyze-Screen] AI response received:", aiAnswer.substring(0, 100));
+    const extractedText = ocrResponse.choices[0]?.message?.content?.trim() || "";
+    console.log("[Analyze-Screen] Extracted screen text:", extractedText.substring(0, 100));
+
+    if (!extractedText || extractedText.length < 5) {
+      return res.json({ ok: true, answer: "Could not clearly read the question on screen. Please ensure the question is in view." });
+    }
+
+    // Step 2: High-accuracy reasoning & math solving with o3-mini
+    console.log("[Analyze-Screen] Step 2: Solving with o3-mini...");
+    let aiAnswer = "";
+
+    try {
+      const solverResponse = await openai.chat.completions.create({
+        model: "o3-mini",
+        messages: [
+          {
+            role: "user",
+            content: `You are an expert exam solver. Solve this question and identify the exact correct option.
+
+Question and Options:
+"""
+${extractedText}
+"""
+
+Format your response strictly as:
+🎯 **Option [Letter]: [Exact Option Value/Text]**
+💡 **Reason:** [1-2 sentences showing the exact calculation or explanation]
+
+Output ONLY the formatted result.`
+          }
+        ]
+      });
+      aiAnswer = solverResponse.choices[0]?.message?.content?.trim() || "";
+    } catch (o3Err) {
+      console.warn("[Analyze-Screen] o3-mini fallback to gpt-4o:", o3Err.message);
+      // Fallback to gpt-4o if o3-mini tier permissions are restricted on the API key
+      const fallbackResponse = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content: "You are an expert exam solver. Calculate the exact answer, match the correct option (A, B, C, D), and output ONLY in the specified format."
+          },
+          {
+            role: "user",
+            content: `Solve this question and pick the correct option:
+${extractedText}
+
+Format:
+🎯 **Option [Letter]: [Exact Option Value/Text]**
+💡 **Reason:** [1-2 sentences]`
+          }
+        ],
+        max_tokens: 200,
+        temperature: 0.0,
+      });
+      aiAnswer = fallbackResponse.choices[0]?.message?.content?.trim() || "No answer generated.";
+    }
+
+    console.log("[Analyze-Screen] Final answer ready:", aiAnswer.substring(0, 100));
     res.json({ ok: true, answer: aiAnswer });
   } catch (err) {
     console.error("[Analyze-Screen] Error:", err.message);
