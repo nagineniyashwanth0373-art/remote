@@ -11,10 +11,6 @@ const scrollBtn = document.getElementById("scrollBtn");
 const typeBtn = document.getElementById("typeBtn");
 const micToggle = document.getElementById("micToggle");
 const cameraToggle = document.getElementById("cameraToggle");
-const snapBtn = document.getElementById("snapBtn");
-const snapResult = document.getElementById("snapResult");
-const snapResultContent = document.getElementById("snapResultContent");
-const snapCloseResult = document.getElementById("snapCloseResult");
 const stopTypingBtn = document.getElementById("stopTypingBtn");
 
 // AI Ans Vision elements
@@ -846,109 +842,6 @@ window.addEventListener("pagehide", (evt) => {
   }
 });
 
-// ===== SNAP FEATURE =====
-// snapMode and lastExtractedText already declared above
-
-// Snap button - toggle snap mode
-snapBtn.addEventListener("click", async () => {
-  // One-click automatic capture
-  await captureAndProcessScreen();
-});
-
-// Function to capture full screen and process
-async function captureAndProcessScreen() {
-  // Check if video is ready
-  if (!remoteVideo.videoWidth || !remoteVideo.videoHeight) {
-    setStatus("Error: Video not ready");
-    snapMode = false;
-    snapBtn.classList.remove("active");
-    return;
-  }
-  
-  console.log("[Snap] Video dimensions:", remoteVideo.videoWidth, "x", remoteVideo.videoHeight);
-  
-  // Capture the entire video frame (full desktop)
-  const captureW = remoteVideo.videoWidth;
-  const captureH = remoteVideo.videoHeight;
-  
-  console.log("[Snap] Capturing full screen:", captureW, "x", captureH);
-  
-  // Create canvas - scale down significantly to avoid 413 error
-  const maxDimension = 1280; // Reduced from 1920 to keep payload small
-  let canvasW = captureW;
-  let canvasH = captureH;
-  
-  if (captureW > maxDimension || captureH > maxDimension) {
-    const ratio = Math.min(maxDimension / captureW, maxDimension / captureH);
-    canvasW = Math.round(captureW * ratio);
-    canvasH = Math.round(captureH * ratio);
-  }
-  
-  const canvas = document.createElement("canvas");
-  canvas.width = canvasW;
-  canvas.height = canvasH;
-  const ctx = canvas.getContext("2d");
-  
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  
-  ctx.drawImage(remoteVideo, 0, 0, captureW, captureH, 0, 0, canvasW, canvasH);
-  
-  // Use JPEG with 85% quality to reduce size (PNG is too large)
-  const imageData = canvas.toDataURL("image/jpeg", 0.85);
-  
-  console.log("[Snap] Image size:", Math.round(imageData.length / 1024), "KB");
-  
-  setStatus("Analyzing screen with OCR...");
-  
-  try {
-    const response = await fetch("/api/snap", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image: imageData })
-    });
-    
-    // Check if response is OK
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("[Snap] Server error:", response.status, errorText);
-      throw new Error(`Server error: ${response.status}`);
-    }
-    
-    const result = await response.json();
-    
-    // Store the extracted text for Text button
-    lastExtractedText = result.text || "No text extracted";
-    
-    // Show result popup - only answer, no extracted text
-    snapResultContent.innerHTML = `
-      <strong>Answer:</strong><br>${result.answer || "No answer"}
-    `;
-    snapResult.hidden = false;
-    setStatus("Analysis complete");
-    
-    // Reset snap mode
-    snapMode = false;
-    snapBtn.classList.remove("active");
-    
-  } catch (err) {
-    snapResultContent.innerHTML = `<strong>Error:</strong><br>${err.message}`;
-    snapResult.hidden = false;
-    setStatus("Analysis failed");
-    snapMode = false;
-    snapBtn.classList.remove("active");
-  }
-}
-
-function hideSnapOverlay() {
-  snapResult.hidden = true;
-}
-
-// Close result button
-snapCloseResult.addEventListener("click", () => {
-  snapResult.hidden = true;
-});
-
 // ===== AI ANS VISION SCREEN ANALYSIS =====
 async function captureAndAnalyzeVisionScreen() {
   if (!isProPlan()) {
@@ -964,7 +857,7 @@ async function captureAndAnalyzeVisionScreen() {
             The <strong>Ans (AI Screen Analysis)</strong> feature is available exclusively on the <strong>Pro Plan</strong>.
           </p>
           <p style="color: #94a3b8; font-size: 12.5px; margin-top: 6px;">
-            Upgrade your account to Pro to unlock real-time GPT-4o-mini screen answers, comprehensive analysis, and automated fixes.
+            Upgrade your account to Pro to unlock real-time AI screen answers, comprehensive analysis, and automated fixes.
           </p>
         </div>
       `;
@@ -983,7 +876,7 @@ async function captureAndAnalyzeVisionScreen() {
   if (aiAnsLoading) aiAnsLoading.hidden = false;
   if (aiAnsText) aiAnsText.textContent = "";
   if (ansBtn) ansBtn.classList.add("active");
-  setStatus("Analyzing screen with GPT-4o-mini...");
+  setStatus("Analyzing screen with AI...");
 
   const captureW = remoteVideo.videoWidth;
   const captureH = remoteVideo.videoHeight;

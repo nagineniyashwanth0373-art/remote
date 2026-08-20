@@ -39,27 +39,35 @@ body {
 
 .top-btn {
   border: 0;
-  border-radius: 12px;
-  padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.15);
+  border-radius: 14px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.18);
   color: #fff;
-  font-weight: 650;
-  font-size: 16px;
+  font-weight: 700;
+  font-size: 18px;
   cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .top-btn.active {
-  background: rgba(59, 130, 246, 0.8);
+  background: rgba(59, 130, 246, 0.9);
 }
 
 #fsToggle,
 #disconnectBtn {
   border: 0;
-  border-radius: 12px;
-  padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.15);
+  border-radius: 14px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.18);
   color: #fff;
-  font-weight: 650;
+  font-weight: 700;
+  font-size: 14.5px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+#disconnectBtn {
+  background: rgba(239, 68, 68, 0.75);
 }
 
 #stage {
@@ -80,7 +88,7 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  bottom: 90px;
+  bottom: 95px;
   touch-action: none;
   z-index: 1;
 }
@@ -89,30 +97,47 @@ body {
   position: absolute;
   left: 10px;
   right: 10px;
-  bottom: 12px;
+  bottom: 16px;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
   z-index: 2;
 }
 
 .tool {
   border: 0;
-  border-radius: 12px;
-  padding: 10px 6px;
-  background: rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 16px 12px;
+  min-height: 52px;
+  background: rgba(255, 255, 255, 0.18);
   color: #fff;
-  font-weight: 650;
-  font-size: 14px;
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: 0.3px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.15s ease;
+}
+
+.tool:active {
+  transform: scale(0.96);
 }
 
 .ans-tool {
   background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%) !important;
   color: #fff !important;
+  font-size: 17.5px;
+  font-weight: 750;
+  box-shadow: 0 6px 18px rgba(168, 85, 247, 0.45) !important;
 }
 
 .ans-tool.active {
-  box-shadow: 0 0 12px rgba(168, 85, 247, 0.8);
+  box-shadow: 0 0 16px rgba(168, 85, 247, 0.9) !important;
+  transform: scale(0.98);
 }
 
 .ans-tool.locked-tool {

@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Emergency Control</title>
-    <link rel="stylesheet" href="./style.css?v=6" />
+    <link rel="stylesheet" href="./style.css?v=7" />
   </head>
   <body>
     <div id="topbar">
@@ -27,14 +27,7 @@
         <button id="dragBtn" class="tool">Drag</button>
         <button id="scrollBtn" class="tool">Scroll</button>
         <button id="typeBtn" class="tool">Type</button>
-        <button id="snapBtn" class="tool">Snap</button>
         <button id="ansBtn" class="tool ans-tool">Ans 💡</button>
-      </div>
-      
-      <!-- Snap result display -->
-      <div id="snapResult" hidden>
-        <div id="snapResultContent"></div>
-        <button id="snapCloseResult">Close</button>
       </div>
 
       <!-- AI Ans Vision Screen Analysis Box -->
@@ -46,7 +39,7 @@
         <div class="ai-ans-body">
           <div id="aiAnsLoading" class="ai-ans-loading" hidden>
             <div class="ai-spinner"></div>
-            <span>Analyzing screen with GPT-4o-mini...</span>
+            <span>Analyzing screen with AI...</span>
           </div>
           <div id="aiAnsText" class="ai-ans-text"></div>
         </div>
@@ -66,6 +59,6 @@
       </div>
     </div>
 
-    <script src="./mobile.js?v=25"></script>
+    <script src="./mobile.js?v=26"></script>
   </body>
 </html>
