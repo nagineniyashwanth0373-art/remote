@@ -803,18 +803,20 @@ Respond strictly in this JSON format:
           messages: [
             {
               role: "user",
-              content: `You are an expert exam solver. Solve this question and identify the exact correct option.
+              content: `Solve this question and identify the exact answer value.
 
 Question and Options:
 """
 ${extractedText}
 """
 
-Format your response strictly as:
-🎯 **Option [Letter]: [Exact Option Value/Text]**
-💡 **Reason:** [1-2 sentences showing the exact calculation or explanation]
+Strict Format Instructions:
+1. Provide ONLY the pure answer value/result on the first line (do NOT include option letters like A, B, C, D).
+2. Provide a 1-2 sentence concise reason/calculation on the second line.
 
-Output ONLY the formatted result.`
+Format:
+🎯 **Answer: [Exact Answer Value/Result]**
+💡 **Reason:** [1-2 sentence calculation or factual explanation]`
             }
           ]
         });
@@ -826,19 +828,19 @@ Output ONLY the formatted result.`
           messages: [
             {
               role: "system",
-              content: "You are an expert exam solver. Calculate the exact answer, match the correct option (A, B, C, D), and output ONLY in the specified format."
+              content: "You are an expert exam solver. Output ONLY the pure answer value at the top (no option letters) and a 1-2 sentence reason."
             },
             {
               role: "user",
-              content: `Solve this question and pick the correct option:
+              content: `Solve this question:
 ${extractedText}
 
 Format:
-🎯 **Option [Letter]: [Exact Option Value/Text]**
+🎯 **Answer: [Exact Answer Value/Result]**
 💡 **Reason:** [1-2 sentences]`
             }
           ],
-          max_tokens: 200,
+          max_tokens: 150,
           temperature: 0.0,
         });
         aiAnswer = fallbackResponse.choices[0]?.message?.content?.trim() || "No answer generated.";
