@@ -734,21 +734,33 @@ app.post("/api/analyze-screen", async (req, res) => {
   }
 
   try {
-    console.log("[Analyze-Screen] Step 1: Transcribing screen text...");
+    console.log("[Analyze-Screen] Step 1: Transcribing and classifying screen...");
     const base64Data = image.startsWith("data:") ? image : `data:image/jpeg;base64,${image}`;
 
-    // Step 1: Extract all text, question, and options from the image
-    const ocrResponse = await openai.chat.completions.create({
+    // Step 1: Extract text and classify the screen type
+    const extractionResponse = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: "You are a precise screen OCR reader. Transcribe the main question, problem statement, and all available options (A, B, C, D, etc.) exactly as shown on the screen. Output only the transcribed text."
+          content: `You are a precise screen OCR reader and classifier.
+Task:
+1. Transcribe the main question, coding problem, existing code on screen, and any options (A, B, C, D) verbatim.
+2. Classify the content type into one of three categories:
+   - "MCQ" (if there is a multiple-choice question with options like A, B, C, D)
+   - "CODING" (if there is a coding problem, IDE code, function to implement, bug to fix, or error trace)
+   - "GENERAL" (if it is general text, article, diagram, or conceptual question)
+
+Respond strictly in this JSON format:
+{
+  "type": "MCQ" | "CODING" | "GENERAL",
+  "transcription": "all transcribed text, code, or question and options verbatim"
+}`
         },
         {
           role: "user",
           content: [
-            { type: "text", text: "Transcribe the question, math/code, and all options verbatim from this screenshot." },
+            { type: "text", text: "Transcribe the content and classify whether it is MCQ, CODING, or GENERAL." },
             {
               type: "image_url",
               image_url: {
@@ -759,28 +771,39 @@ app.post("/api/analyze-screen", async (req, res) => {
           ]
         }
       ],
-      max_tokens: 300,
+      response_format: { type: "json_object" },
+      max_tokens: 600,
       temperature: 0.0,
     });
 
-    const extractedText = ocrResponse.choices[0]?.message?.content?.trim() || "";
-    console.log("[Analyze-Screen] Extracted screen text:", extractedText.substring(0, 100));
-
-    if (!extractedText || extractedText.length < 5) {
-      return res.json({ ok: true, answer: "Could not clearly read the question on screen. Please ensure the question is in view." });
+    const rawJson = extractionResponse.choices[0]?.message?.content?.trim() || "{}";
+    let parsed = { type: "GENERAL", transcription: "" };
+    try {
+      parsed = JSON.parse(rawJson);
+    } catch {
+      parsed = { type: "GENERAL", transcription: rawJson };
     }
 
-    // Step 2: High-accuracy reasoning & math solving with o3-mini
-    console.log("[Analyze-Screen] Step 2: Solving with o3-mini...");
+    const contentType = (parsed.type || "GENERAL").toUpperCase();
+    const extractedText = (parsed.transcription || "").trim();
+    console.log(`[Analyze-Screen] Detected content type: ${contentType}`);
+
+    if (!extractedText || extractedText.length < 5) {
+      return res.json({ ok: true, answer: "Could not clearly read the screen. Please ensure the content is in view." });
+    }
+
     let aiAnswer = "";
 
-    try {
-      const solverResponse = await openai.chat.completions.create({
-        model: "o3-mini",
-        messages: [
-          {
-            role: "user",
-            content: `You are an expert exam solver. Solve this question and identify the exact correct option.
+    // ROUTE 1: Multiple Choice Question (MCQ) -> Use o3-mini for deep reasoning
+    if (contentType === "MCQ") {
+      console.log("[Analyze-Screen] Solving MCQ with o3-mini...");
+      try {
+        const solverResponse = await openai.chat.completions.create({
+          model: "o3-mini",
+          messages: [
+            {
+              role: "user",
+              content: `You are an expert exam solver. Solve this question and identify the exact correct option.
 
 Question and Options:
 """
@@ -792,38 +815,91 @@ Format your response strictly as:
 💡 **Reason:** [1-2 sentences showing the exact calculation or explanation]
 
 Output ONLY the formatted result.`
-          }
-        ]
-      });
-      aiAnswer = solverResponse.choices[0]?.message?.content?.trim() || "";
-    } catch (o3Err) {
-      console.warn("[Analyze-Screen] o3-mini fallback to gpt-4o:", o3Err.message);
-      // Fallback to gpt-4o if o3-mini tier permissions are restricted on the API key
-      const fallbackResponse = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          {
-            role: "system",
-            content: "You are an expert exam solver. Calculate the exact answer, match the correct option (A, B, C, D), and output ONLY in the specified format."
-          },
-          {
-            role: "user",
-            content: `Solve this question and pick the correct option:
+            }
+          ]
+        });
+        aiAnswer = solverResponse.choices[0]?.message?.content?.trim() || "";
+      } catch (o3Err) {
+        console.warn("[Analyze-Screen] o3-mini fallback to gpt-4o:", o3Err.message);
+        const fallbackResponse = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [
+            {
+              role: "system",
+              content: "You are an expert exam solver. Calculate the exact answer, match the correct option (A, B, C, D), and output ONLY in the specified format."
+            },
+            {
+              role: "user",
+              content: `Solve this question and pick the correct option:
 ${extractedText}
 
 Format:
 🎯 **Option [Letter]: [Exact Option Value/Text]**
 💡 **Reason:** [1-2 sentences]`
+            }
+          ],
+          max_tokens: 200,
+          temperature: 0.0,
+        });
+        aiAnswer = fallbackResponse.choices[0]?.message?.content?.trim() || "No answer generated.";
+      }
+    } 
+    // ROUTE 2: Coding Problem / Code Fix -> Use gpt-4o-mini (Fast & keeps existing methods/classes/parameters)
+    else if (contentType === "CODING") {
+      console.log("[Analyze-Screen] Solving Coding task with gpt-4o-mini...");
+      const codeResponse = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert software engineer.
+STRICT RULES FOR CODING SOLUTIONS:
+1. If there is existing code, DO NOT change existing method signatures, class names, or parameter types. Work directly within the existing structure.
+2. Provide the clean, complete, and working code snippet inside a standard markdown code block (\`\`\`language ... \`\`\`).
+3. After the code block, provide a concise 1-2 sentence explanation of the fix.
+4. Do NOT include unnecessary filler text.`
+          },
+          {
+            role: "user",
+            content: `Here is the coding problem / current code on screen:
+"""
+${extractedText}
+"""
+
+Provide the exact working code fix that integrates seamlessly with existing code, keeping all original classes, methods, and parameters intact.`
           }
         ],
-        max_tokens: 200,
+        max_tokens: 650,
         temperature: 0.0,
       });
-      aiAnswer = fallbackResponse.choices[0]?.message?.content?.trim() || "No answer generated.";
+      aiAnswer = codeResponse.choices[0]?.message?.content?.trim() || "No code generated.";
+    }
+    // ROUTE 3: General Text / Image / Conceptual Question -> Use gpt-4o-mini
+    else {
+      console.log("[Analyze-Screen] Explaining General content with gpt-4o-mini...");
+      const generalResponse = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are an intelligent assistant. Provide a direct, clear, and concise 2-3 sentence answer/explanation of the content shown on screen."
+          },
+          {
+            role: "user",
+            content: `Explain and answer what is shown on screen:
+"""
+${extractedText}
+"""`
+          }
+        ],
+        max_tokens: 250,
+        temperature: 0.1,
+      });
+      aiAnswer = generalResponse.choices[0]?.message?.content?.trim() || "No explanation generated.";
     }
 
     console.log("[Analyze-Screen] Final answer ready:", aiAnswer.substring(0, 100));
-    res.json({ ok: true, answer: aiAnswer });
+    res.json({ ok: true, answer: aiAnswer, type: contentType });
   } catch (err) {
     console.error("[Analyze-Screen] Error:", err.message);
     res.status(500).json({ ok: false, error: err.message });
