@@ -738,23 +738,22 @@ app.post("/api/analyze-screen", async (req, res) => {
     const base64Data = image.startsWith("data:") ? image : `data:image/jpeg;base64,${image}`;
     const userPrompt = prompt && typeof prompt === "string" && prompt.trim().length > 0
       ? prompt.trim()
-      : `Carefully examine the question and all multiple-choice options in the screenshot.
-Follow this procedure:
-1. Solve the question step-by-step internally to find the exact correct value or answer.
-2. Match your solved result to the corresponding multiple-choice option (A, B, C, or D).
-3. Output ONLY the matched option and a 1-2 sentence explanation.
-
-Format:
+      : `You are answering a multiple-choice exam question.
+Step 1: Read the question and all options (A, B, C, D) carefully.
+Step 2: Solve the problem step-by-step to find the mathematically/logically correct answer.
+Step 3: Select the exact matching option letter.
+Step 4: Output ONLY:
 🎯 **Option [Letter]: [Exact Option Value/Text]**
+💡 **Reason:** [1 brief sentence showing calculation/fact]
 
-💡 **Explanation:** [1-2 sentences showing the quick formula/calculation or reason]`;
+Do NOT output any other sections, do NOT output contradictory numbers.`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: "You are an expert exam solver. You MUST calculate and verify the correct answer mathematically/logically before picking the option. Always match your final calculated result to the exact option letter (A, B, C, D) visible on screen. Do not output multiple contradictory numbers. Output ONLY the final correct option and a brief explanation."
+          content: "You are a professional competitive exam solver. You MUST calculate and verify the problem before outputting. Output ONLY the correct option letter (A, B, C, D) and its value, followed by a 1-sentence reason. Never output draft headers, never output incorrect initial guesses."
         },
         {
           role: "user",
@@ -770,7 +769,7 @@ Format:
           ]
         }
       ],
-      max_tokens: 250,
+      max_tokens: 150,
       temperature: 0.0,
     });
 
