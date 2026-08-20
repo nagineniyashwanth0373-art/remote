@@ -1,7 +1,6 @@
 const statusEl = document.getElementById("status");
 const remoteVideo = document.getElementById("remoteVideo");
 const touchLayer = document.getElementById("touchLayer");
-const fsToggle = document.getElementById("fsToggle");
 const disconnectBtn = document.getElementById("disconnectBtn");
 const typeSheet = document.getElementById("typeSheet");
 const typeInput = document.getElementById("typeInput");
@@ -614,24 +613,6 @@ if (stopTypingBtn) {
   stopTypingBtn.addEventListener("click", handleStopTyping);
   stopTypingBtn.addEventListener("touchstart", handleStopTyping, { passive: false });
 }
-
-fsToggle.addEventListener("click", async () => {
-  const stage = document.getElementById("stage");
-  if (!document.fullscreenElement) {
-    try {
-      await stage.requestFullscreen();
-      if (screen.orientation && screen.orientation.lock) {
-        try {
-          await screen.orientation.lock("landscape");
-        } catch {}
-      }
-    } catch {}
-  } else {
-    try {
-      await document.exitFullscreen();
-    } catch {}
-  }
-});
 
 disconnectBtn.addEventListener("click", () => {
   dcSend({ type: "command", command: "disconnect" });
