@@ -680,25 +680,20 @@ app.post("/api/snap", async (req, res) => {
     }
     
     // Send to OpenAI for analysis with improved prompt
-    console.log("[Snap] Sending to OpenAI GPT-4o mini...");
+    console.log("[Snap] Sending to OpenAI...");
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: `You are an expert at solving problems from text. The user will provide text extracted via OCR which may contain errors or be messy.
+          content: `You are an expert exam and problem-solving AI. The user will provide text extracted via OCR.
+Provide ONLY:
+1. The exact option letter (A, B, C, D) and option text.
+2. A very short 1-2 sentence explanation.
 
-Your job:
-1. First, try to understand what the text is asking (math problem, trivia, riddle, etc.)
-2. If it's a question, solve it and give ONLY the final answer (1-2 sentences max)
-3. If the OCR text is garbled, try to interpret the intended meaning
-4. Never say "I cannot" or "the text is unclear" - do your best to answer
-5. Be direct and concise - just the answer, no explanations
-
-Examples:
-- "What is 2+2?" -> "4"
-- "Capital of France?" -> "Paris"
-- "Solve: x^2 = 4" -> "x = 2 or x = -2"`
+Format:
+🎯 Option [Letter]: [Answer Text]
+💡 Explanation: [1-2 sentences]`
         },
         {
           role: "user",
@@ -722,7 +717,7 @@ Examples:
   }
 });
 
-// Screen Analysis Endpoint (GPT-4o-mini Vision)
+// Screen Analysis Endpoint (Vision)
 app.post("/api/analyze-screen", async (req, res) => {
   const { image, prompt } = req.body || {};
 
@@ -739,27 +734,25 @@ app.post("/api/analyze-screen", async (req, res) => {
   }
 
   try {
-    console.log("[Analyze-Screen] Sending screen to GPT-4o-mini Vision...");
+    console.log("[Analyze-Screen] Processing screen vision...");
     const base64Data = image.startsWith("data:") ? image : `data:image/jpeg;base64,${image}`;
     const userPrompt = prompt && typeof prompt === "string" && prompt.trim().length > 0
       ? prompt.trim()
-      : `Analyze the attached screenshot and format your output clearly with the following sections:
+      : `Look at the screenshot and provide ONLY:
+1. The correct option letter (A, B, C, or D) + exact option text.
+2. A very brief 1-2 sentence explanation.
 
-🎯 **ANSWER / RESULT**:
-Direct, exact answer to any question, quiz, calculation, code query, or dialog on screen.
+Format exactly like this:
+🎯 **Option [Letter]: [Exact Answer Text]**
 
-🔍 **ANALYSIS**:
-Concise 2-3 sentence explanation of what is happening on screen, context, and reasoning.
-
-🛠️ **FIX / ACTION**:
-Step-by-step fix, recommended code snippet, or exact user action to resolve or proceed.`;
+💡 **Explanation:** [1-2 short sentences why it is correct]`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: "You are an expert AI desktop assistant analyzing a remote screen in real-time. Provide structured, accurate, and actionable answers with clear Answer, Analysis, and Fix sections."
+          content: "You are an expert exam and problem-solving AI. Keep responses extremely direct, clean, and concise. Always identify the exact option letter (A, B, C, D) and option text first, followed by a short 1-2 sentence explanation. Never include filler or unnecessary preamble. If it is not a multiple-choice question, provide the direct answer first, followed by a 1-sentence explanation."
         },
         {
           role: "user",
@@ -775,8 +768,8 @@ Step-by-step fix, recommended code snippet, or exact user action to resolve or p
           ]
         }
       ],
-      max_tokens: 650,
-      temperature: 0.2,
+      max_tokens: 250,
+      temperature: 0.1,
     });
 
     const aiAnswer = completion.choices[0]?.message?.content?.trim() || "No answer generated.";
@@ -868,15 +861,12 @@ wss.on("connection", (ws, req) => {
 
       if (msg.role === "mobile") {
         console.log(`[Hello] Mobile connected, token: ${token.substring(0, 8)}...`);
-        // If same socket reconnecting, just update
-        if (session.mobileSocket === ws) {
-          console.log(`[Hello] Same mobile socket, updating`);
-        } else if (session.mobileSocket && session.mobileSocket !== ws) {
-          // Close old socket before accepting new one
-          console.log(`[Hello] Closing old mobile socket, accepting new one`);
+        if (session.mobileSocket && session.mobileSocket !== ws) {
+          console.log(`[Hello] Mobile already connected, rejecting`);
           try {
-            session.mobileSocket.close(4409, "new-connection");
+            ws.close(4409, "mobile-already-connected");
           } catch {}
+          return;
         }
         session.mobileSocket = ws;
         console.log(`[Hello] Mobile socket stored, desktop exists: ${!!session.desktopSocket}`);
@@ -897,46 +887,19 @@ wss.on("connection", (ws, req) => {
 
       return;
     }
-    
-    // Handle client ping (keepalive from mobile/desktop)
-    if (msg.type === "ping") {
-      try {
-        ws.send(JSON.stringify({ type: "pong" }));
-      } catch {}
-      return;
-    }
 
     const desktop = session.desktopSocket;
     const mobile = session.mobileSocket;
 
-    console.log(`[Message] Session state - Desktop: ${!!desktop}, Mobile: ${!!mobile}, From: ${session.desktopSocket === ws ? "desktop" : "mobile"}`);
-
     if (msg.type === "signal") {
       const target = msg.target === "desktop" ? desktop : mobile;
-      const fromRole = session.desktopSocket === ws ? "desktop" : "mobile";
-      const targetRole = msg.target;
-      const payloadType = msg.payload?.type || "unknown";
-      const targetExists = !!target;
-      const targetOpen = isOpen(target);
-      
-      console.log(`[Signal] From ${fromRole} to ${targetRole}, type: ${payloadType}`);
-      console.log(`[Signal] Target exists: ${targetExists}, Target open: ${targetOpen}`);
-      console.log(`[Signal] Desktop socket: ${!!desktop}, Mobile socket: ${!!mobile}`);
-      
-      if (!targetExists) {
-        console.log(`[Signal] FAILED: Target socket is null`);
-        return;
-      }
-      if (!targetOpen) {
-        console.log(`[Signal] FAILED: Target socket not open, readyState: ${target?.readyState}`);
+      if (!isOpen(target)) {
+        console.log(`[Signal] Target ${msg.target} not open`);
         return;
       }
       try {
         target.send(JSON.stringify({ type: "signal", payload: msg.payload }));
-        console.log(`[Signal] SUCCESS: Relayed ${payloadType} to ${targetRole}`);
-      } catch (e) {
-        console.log(`[Signal] ERROR: Failed to relay:`, e.message);
-      }
+      } catch {}
       return;
     }
 
