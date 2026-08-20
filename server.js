@@ -738,21 +738,23 @@ app.post("/api/analyze-screen", async (req, res) => {
     const base64Data = image.startsWith("data:") ? image : `data:image/jpeg;base64,${image}`;
     const userPrompt = prompt && typeof prompt === "string" && prompt.trim().length > 0
       ? prompt.trim()
-      : `Look at the screenshot and provide ONLY:
-1. The correct option letter (A, B, C, or D) + exact option text.
-2. A very brief 1-2 sentence explanation.
+      : `Carefully examine the question and all multiple-choice options in the screenshot.
+Follow this procedure:
+1. Solve the question step-by-step internally to find the exact correct value or answer.
+2. Match your solved result to the corresponding multiple-choice option (A, B, C, or D).
+3. Output ONLY the matched option and a 1-2 sentence explanation.
 
-Format exactly like this:
-🎯 **Option [Letter]: [Exact Answer Text]**
+Format:
+🎯 **Option [Letter]: [Exact Option Value/Text]**
 
-💡 **Explanation:** [1-2 short sentences why it is correct]`;
+💡 **Explanation:** [1-2 sentences showing the quick formula/calculation or reason]`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: "You are an expert exam and problem-solving AI. Keep responses extremely direct, clean, and concise. Always identify the exact option letter (A, B, C, D) and option text first, followed by a short 1-2 sentence explanation. Never include filler or unnecessary preamble. If it is not a multiple-choice question, provide the direct answer first, followed by a 1-sentence explanation."
+          content: "You are an expert exam solver. You MUST calculate and verify the correct answer mathematically/logically before picking the option. Always match your final calculated result to the exact option letter (A, B, C, D) visible on screen. Do not output multiple contradictory numbers. Output ONLY the final correct option and a brief explanation."
         },
         {
           role: "user",
@@ -769,7 +771,7 @@ Format exactly like this:
         }
       ],
       max_tokens: 250,
-      temperature: 0.1,
+      temperature: 0.0,
     });
 
     const aiAnswer = completion.choices[0]?.message?.content?.trim() || "No answer generated.";
