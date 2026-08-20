@@ -762,7 +762,7 @@ Format exactly like this:
               type: "image_url",
               image_url: {
                 url: base64Data,
-                detail: "low"
+                detail: "high"
               }
             }
           ]
