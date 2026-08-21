@@ -166,7 +166,7 @@ setInterval(async () => {
     const mobileConnected = isOpen(session.mobileSocket);
 
     // Security 4: Mid-session plan expiration check
-    // If a 1-day pass or 10-minute trial has expired, notify sockets and terminate session
+    // If a plan has an active expiry date (trial or timed pass) and it has expired, terminate session
     if (session.plan && session.plan !== "basic" && supabase) {
       const linkState = linkStates.get(token);
       if (linkState && linkState.email) {
@@ -179,7 +179,7 @@ setInterval(async () => {
 
           if (profile && profile.plan_expires_at) {
             const expiryTime = new Date(profile.plan_expires_at).getTime();
-            if (now > expiryTime) {
+            if (!isNaN(expiryTime) && expiryTime > 0 && now > expiryTime) {
               console.log(`[Session] Plan expired for ${linkState.email} (token: ${token.substring(0, 8)}...). Terminating connection.`);
               session.plan = "basic";
               linkState.plan = "basic";
