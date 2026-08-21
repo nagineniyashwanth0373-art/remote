@@ -1364,32 +1364,37 @@ ipcMain.handle("regenerate-session", async () => {
   const profile = await fetchProfileByEmail(acc.email);
   if (!profile) throw new Error("profile-fetch-failed");
   
-  // Handle TTL for plans
-  if (plan === "trial") {
-    if (profile.plan_expires_at) {
-      const expiry = new Date(profile.plan_expires_at);
-      const now = new Date();
-      if (expiry.getTime() < now.getTime()) {
-        plan = "basic"; 
-        saveStoredAccount({ email: acc.email, plan: "basic" });
-        console.log(`[Session] Trial expired for ${acc.email}. Reverted to basic.`);
-      } else {
-        saveStoredAccount({ email: acc.email, plan: "trial" });
-        customTtl = Math.max(0, expiry.getTime() - now.getTime());
-      }
+  let plan = profile.plan || "basic";
+  let customTtl = undefined;
+  
+  // Handle expiry for 'trial' plan
+  if (plan === "trial" && profile.plan_expires_at) {
+    if (new Date(profile.plan_expires_at) < new Date()) {
+      plan = "basic"; 
+      saveStoredAccount({ email: acc.email, plan: "basic" });
+      console.log(`[Session] Trial expired for ${acc.email}. Reverted to basic.`);
     } else {
-      customTtl = TRIAL_SESSION_TTL_MS;
+      // Ensure stored plan is 'trial'
+      saveStoredAccount({ email: acc.email, plan: "trial" });
+      
+      const expiry = new Date(profile.plan_expires_at);
+      const now = new Date();
+      customTtl = expiry.getTime() - now.getTime();
+      if (customTtl <= 0) {
+          plan = "basic";
+          saveStoredAccount({ email: acc.email, plan: "basic" });
+      }
     }
-  } else if (plan === "pro" || plan === "premium" || plan === "enterprise") {
+  } else if (plan !== "basic") {
+    // For paid/pro accounts, check if plan has an expiration date, otherwise default to 24h
     if (profile.plan_expires_at) {
       const expiry = new Date(profile.plan_expires_at);
       const now = new Date();
-      if (expiry.getTime() < now.getTime()) {
-        plan = "basic";
-        saveStoredAccount({ email: acc.email, plan: "basic" });
-        console.log(`[Session] Pro subscription expired for ${acc.email}. Reverted to basic.`);
+      const remaining = expiry.getTime() - now.getTime();
+      if (remaining > 0) {
+        customTtl = remaining;
       } else {
-        customTtl = Math.max(0, expiry.getTime() - now.getTime());
+        customTtl = PAID_SESSION_TTL_MS;
       }
     } else {
       customTtl = PAID_SESSION_TTL_MS;
@@ -1402,10 +1407,9 @@ ipcMain.handle("regenerate-session", async () => {
      throw new Error("trial-required");
   }
 
-  const effectiveTtlMs = typeof customTtl === "number" && !isNaN(customTtl) ? customTtl : PAID_SESSION_TTL_MS;
-  console.log(`[Session] Starting session for ${acc.email} (Plan: ${plan}, TTL: ${Math.round(effectiveTtlMs/1000)}s)`);
+  console.log(`[Session] Starting session for ${acc.email} (Plan: ${plan}, TTL: ${Math.round((customTtl || PAID_SESSION_TTL_MS)/1000)}s)`);
   
-  resetSession({ keepDesktopSocket: true, ttl: effectiveTtlMs });
+  resetSession({ keepDesktopSocket: true, ttl: customTtl });
   const mobileUrl = await getMobileUrl();
   const desktopUrl = await getDesktopUrl();
   const wsUrl = await getWsUrl();
