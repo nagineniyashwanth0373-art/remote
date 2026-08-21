@@ -105,7 +105,17 @@ function getNormFromPoint(clientX, clientY) {
 let ws = null;
 let pc = null;
 let dc = null;
+let disconnectTimer = null;
 let keepAliveInterval = null;
+
+function wsSend(obj) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  try {
+    ws.send(JSON.stringify(obj));
+  } catch (e) {
+    console.error("[DesktopClient] wsSend error:", e);
+  }
+}
 
 function dcSend(msg) {
   if (!dc || dc.readyState !== "open") return;
@@ -123,18 +133,19 @@ function initSignaling() {
     return;
   }
 
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  const wsUrl = `${protocol}//${location.host}/ws?t=${encodeURIComponent(token)}`;
+  const wsScheme = location.protocol === "https:" ? "wss" : "ws";
+  const wsUrl = `${wsScheme}://${location.host}/ws?t=${encodeURIComponent(token)}`;
   ws = new WebSocket(wsUrl);
 
   ws.addEventListener("open", () => {
-    setStatus("Connected to server. Establishing remote stream…");
-    ws.send(JSON.stringify({ type: "hello", role: "mobile" }));
+    setStatus("Waiting for remote desktop…");
+    wsSend({ type: "hello", role: "mobile" });
+    wsSend({ type: "peer", target: "desktop", payload: { event: "mobile-online" } });
 
     if (keepAliveInterval) clearInterval(keepAliveInterval);
     keepAliveInterval = setInterval(() => {
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "ping" }));
+        wsSend({ type: "ping" });
       }
     }, 20000);
   });
@@ -158,9 +169,11 @@ function initSignaling() {
           clientPlan = String(msg.payload.plan).trim().toLowerCase();
           updateAnsBtnAppearance();
         }
-        setStatus("Remote desktop connected.");
+        setStatus("Remote desktop connected. Waiting for stream…");
       }
       if (msg.payload.event === "desktop-offline") setStatus("Remote desktop offline.");
+      if (msg.payload.event === "capture-failed") setStatus(`Capture failed: ${msg.payload.message || ""}`.trim());
+      if (msg.payload.event === "capture-restart") setStatus("Reconnecting stream…");
       if (msg.payload.event === "plan-expired") {
         setStatus("Session ended: Plan duration expired.");
         alert("Your plan duration has expired.");
@@ -180,31 +193,73 @@ function createPeerConnection() {
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
   });
 
-  peer.ontrack = (evt) => {
-    if (evt.track.kind === "video") {
-      remoteVideo.srcObject = evt.streams[0] || new MediaStream([evt.track]);
-      remoteVideo.play().catch(() => {});
-    }
-  };
+  let remoteStream = null;
 
-  peer.ondatachannel = (evt) => {
-    dc = evt.channel;
-    dc.onopen = () => {
-      setStatus("Control active. Ready for input.");
-    };
-    dc.onclose = () => {
-      setStatus("Control channel closed.");
-    };
+  peer.ontrack = (evt) => {
+    console.log("[DesktopClient] ontrack fired:", evt.track.kind);
+
+    if (!remoteStream) {
+      remoteStream = evt.streams && evt.streams[0] ? evt.streams[0] : new MediaStream();
+    }
+
+    const existingTrack = remoteStream.getTracks().find(t => t.id === evt.track.id);
+    if (!existingTrack) {
+      remoteStream.addTrack(evt.track);
+    }
+
+    remoteVideo.style.display = "block";
+    remoteVideo.style.visibility = "visible";
+
+    if (remoteVideo.srcObject !== remoteStream) {
+      remoteVideo.srcObject = remoteStream;
+      console.log("[DesktopClient] Video srcObject bound to remoteStream");
+    }
+
+    remoteVideo.play().then(() => {
+      console.log("[DesktopClient] Video playing successfully");
+    }).catch((e) => {
+      console.log("[DesktopClient] Play failed, waiting for user interaction:", e);
+      document.addEventListener("click", function retryPlay() {
+        remoteVideo.play().catch(() => {});
+      }, { once: true });
+    });
   };
 
   peer.onicecandidate = (evt) => {
     if (!evt.candidate) return;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: "signal",
-        target: "desktop",
-        payload: { type: "candidate", candidate: evt.candidate }
-      }));
+    wsSend({ type: "signal", target: "desktop", payload: { type: "candidate", candidate: evt.candidate } });
+  };
+
+  // Negotiated datachannel (id: 0)
+  dc = peer.createDataChannel("input", { ordered: true, negotiated: true, id: 0 });
+  dc.onopen = () => {
+    setStatus("Connected & Ready for input.");
+  };
+  dc.onclose = () => {
+    setStatus("Disconnected.");
+  };
+
+  peer.onconnectionstatechange = () => {
+    const st = peer.connectionState;
+    console.log("[DesktopClient] Connection state:", st);
+    if (st === "connected") {
+      setStatus("Connected.");
+    }
+    if (st === "failed") {
+      teardown();
+      return;
+    }
+    if (st === "disconnected") {
+      if (disconnectTimer) clearTimeout(disconnectTimer);
+      disconnectTimer = setTimeout(() => {
+        if (!pc) return;
+        if (pc.connectionState === "disconnected") teardown();
+      }, 4000);
+      return;
+    }
+    if (disconnectTimer) {
+      clearTimeout(disconnectTimer);
+      disconnectTimer = null;
     }
   };
 
@@ -212,25 +267,25 @@ function createPeerConnection() {
 }
 
 async function handleSignal(payload) {
-  if (!pc) pc = createPeerConnection();
+  if (!payload || typeof payload.type !== "string") return;
 
   if (payload.type === "offer") {
-    await pc.setRemoteDescription(new RTCSessionDescription(payload));
+    if (pc) teardown();
+    pc = createPeerConnection();
+    await pc.setRemoteDescription(payload.sdp);
+    console.log("[DesktopClient] Remote SDP set, creating answer...");
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: "signal",
-        target: "desktop",
-        payload: { type: "answer", sdp: answer.sdp }
-      }));
-    }
+    console.log("[DesktopClient] Local description set, sending answer to desktop...");
+    wsSend({ type: "signal", target: "desktop", payload: { type: "answer", sdp: pc.localDescription } });
+    setStatus("Connecting…");
     return;
   }
 
-  if (payload.type === "candidate" && payload.candidate) {
+  if (payload.type === "candidate") {
+    if (!pc) return;
     try {
-      await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
+      await pc.addIceCandidate(payload.candidate);
     } catch {}
   }
 }
@@ -243,6 +298,10 @@ function teardown() {
   if (pc) {
     try { pc.close(); } catch {}
     pc = null;
+  }
+  if (disconnectTimer) {
+    clearTimeout(disconnectTimer);
+    disconnectTimer = null;
   }
 }
 
