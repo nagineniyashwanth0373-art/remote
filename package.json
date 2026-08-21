@@ -8,7 +8,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "electron .",
-    "lint": "node -c electron/main.js && node -c electron/preload.js && node -c electron/renderer/renderer.js && node -c public/mobile/mobile.js && node -c server.js",
+    "lint": "node -c electron/main.js && node -c electron/preload.js && node -c electron/renderer/renderer.js && node -c public/mobile/mobile.js && node -c public/desktop/desktop.js && node -c server.js",
     "railway": "node server.js",
     "build": "echo 'No build necessary for server'",
     "build:app": "electron-builder"

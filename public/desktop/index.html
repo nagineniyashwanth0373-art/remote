@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>Helvia Remote Control</title>
+    <link rel="stylesheet" href="./style.css?v=10" />
+  </head>
+  <body class="desktop-client">
+    <!-- Slim Auto-Hiding Top Status & Action Bar -->
+    <div id="topbar" class="desktop-topbar">
+      <div class="topbar-left">
+        <span class="brand-logo">⚡ Helvia Remote</span>
+        <span id="status" class="connection-status">Connecting…</span>
+      </div>
+      <div class="topbar-actions">
+        <button id="micToggle" class="top-btn" title="Toggle Remote Microphone Audio">🎤 Listen</button>
+        <button id="cameraToggle" class="top-btn" title="Toggle Remote Camera">📷 Camera</button>
+        <button id="fsToggle" class="top-btn" title="Toggle Fullscreen">⛶ Fullscreen</button>
+        <button id="disconnectBtn" class="top-btn disconnect-btn" title="Disconnect Session">Disconnect</button>
+      </div>
+    </div>
+
+    <!-- Main Full-Screen Display Stage -->
+    <div id="stage" class="desktop-stage" tabindex="0">
+      <video id="remoteVideo" autoplay muted playsinline></video>
+      <div id="touchLayer" class="desktop-interactive-layer"></div>
+
+      <!-- Floating Pro AI Ans Button (AnyDesk/Chrome Remote style floating pill) -->
+      <div id="floatingAnsContainer" class="floating-ans-wrap">
+        <button id="ansBtn" class="floating-ans-btn" title="AI Screen Analysis">
+          <span class="ai-icon">✨</span>
+          <span class="ai-label">Ans</span>
+        </button>
+      </div>
+
+      <!-- AI Ans Vision Screen Analysis Box -->
+      <div id="aiAnsBox" class="ai-ans-box" hidden>
+        <div class="ai-ans-header">
+          <div class="ai-ans-title"><span>✨</span> AI Screen Analysis</div>
+          <button id="aiAnsClose" class="ai-ans-close">&times;</button>
+        </div>
+        <div class="ai-ans-body">
+          <div id="aiAnsLoading" class="ai-ans-loading" hidden>
+            <div class="ai-spinner"></div>
+            <span>Analyzing screen with AI...</span>
+          </div>
+          <div id="aiAnsText" class="ai-ans-text"></div>
+        </div>
+        <div class="ai-ans-actions">
+          <button id="aiAnsCopy" class="ai-btn-secondary">Copy</button>
+          <button id="aiAnsRefresh" class="ai-btn-primary">Re-analyze</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="./desktop.js?v=10"></script>
+  </body>
+</html>

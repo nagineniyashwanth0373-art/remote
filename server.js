@@ -167,7 +167,7 @@ setInterval(async () => {
 
     // Security 4: Mid-session plan expiration check
     // If a 1-day pass or 10-minute trial has expired, notify sockets and terminate session
-    if (session.plan && session.plan === "trial" && supabase) {
+    if (session.plan && session.plan !== "basic" && supabase) {
       const linkState = linkStates.get(token);
       if (linkState && linkState.email) {
         try {
@@ -179,15 +179,15 @@ setInterval(async () => {
 
           if (profile && profile.plan_expires_at) {
             const expiryTime = new Date(profile.plan_expires_at).getTime();
-            if (!isNaN(expiryTime) && now > expiryTime) {
-              console.log(`[Session] Trial expired for ${linkState.email} (token: ${token.substring(0, 8)}...). Terminating connection.`);
+            if (now > expiryTime) {
+              console.log(`[Session] Plan expired for ${linkState.email} (token: ${token.substring(0, 8)}...). Terminating connection.`);
               session.plan = "basic";
               linkState.plan = "basic";
               try {
                 if (isOpen(session.mobileSocket)) {
                   session.mobileSocket.send(JSON.stringify({
                     type: "peer",
-                    payload: { event: "plan-expired", message: "Your trial duration has expired." }
+                    payload: { event: "plan-expired", message: "Your plan duration has expired." }
                   }));
                   session.mobileSocket.close(4403, "plan-expired");
                 }
@@ -291,11 +291,12 @@ app.get("/m/", (req, res) => {
 
 app.use("/m/", express.static(path.join(publicDir, "mobile"), { index: false }));
 
+// Dedicated Desktop Controller (Chrome Remote Desktop & AnyDesk native controls)
 app.get("/d/", (req, res) => {
-  res.sendFile(path.join(publicDir, "mobile", "index.html"));
+  res.sendFile(path.join(publicDir, "desktop", "index.html"));
 });
 
-app.use("/d/", express.static(path.join(publicDir, "mobile"), { index: false }));
+app.use("/d/", express.static(path.join(publicDir, "desktop"), { index: false }));
 
 app.get("/health", (req, res) => {
   res.json({ ok: true });
