@@ -961,7 +961,7 @@ wss.on("connection", (ws, req) => {
 
     if (msg.type === "hello") {
       if (msg.role === "desktop") {
-        console.log(`[Hello] Desktop connected, token: ${token.substring(0, 8)}..., plan: ${msg.plan || 'basic'}`);
+        console.log(`[Hello] Desktop connected, token: ${token.substring(0, 8)}...`);
         if (session.desktopSocket && session.desktopSocket !== ws) {
           console.log(`[Hello] Desktop already connected, rejecting`);
           try {
@@ -970,10 +970,8 @@ wss.on("connection", (ws, req) => {
           return;
         }
         session.desktopSocket = ws;
-        if (msg.plan) {
-          session.plan = String(msg.plan).trim().toLowerCase();
-        }
-        console.log(`[Hello] Desktop socket stored, mobile exists: ${!!session.mobileSocket}`);
+        if (msg.plan) session.plan = msg.plan;
+        console.log(`[Hello] Desktop socket stored, mobile exists: ${!!session.mobileSocket}, plan: ${session.plan || "default"}`);
         if (isOpen(session.mobileSocket)) {
           try {
             session.mobileSocket.send(JSON.stringify({ type: "peer", payload: { event: "desktop-online", plan: session.plan || "basic" } }));

@@ -540,6 +540,7 @@ async function getDesktopUrl() {
   params.set("t", token);
 
   const plan = getCurrentPlan();
+  params.set("plan", plan);
   const isTrial = plan === "basic" || plan === "trial";
 
   const publicBase = getResolvedPublicBaseUrl();
