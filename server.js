@@ -159,19 +159,57 @@ function getSession(token) {
   return session;
 }
 
-setInterval(() => {
+setInterval(async () => {
   const now = Date.now();
   for (const [token, session] of sessions.entries()) {
-    if (session.expiresAt > now) continue;
-    
-    // Don't expire if either socket is still connected
     const desktopConnected = isOpen(session.desktopSocket);
     const mobileConnected = isOpen(session.mobileSocket);
+
+    // Security 4: Mid-session plan expiration check
+    // If a 1-day pass or 10-minute trial has expired, notify sockets and terminate session
+    if (session.plan && session.plan !== "basic" && supabase) {
+      const linkState = linkStates.get(token);
+      if (linkState && linkState.email) {
+        try {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("plan, plan_expires_at")
+            .eq("email", linkState.email.toLowerCase())
+            .maybeSingle();
+
+          if (profile && profile.plan_expires_at) {
+            const expiryTime = new Date(profile.plan_expires_at).getTime();
+            if (now > expiryTime) {
+              console.log(`[Session] Plan expired for ${linkState.email} (token: ${token.substring(0, 8)}...). Terminating connection.`);
+              session.plan = "basic";
+              linkState.plan = "basic";
+              try {
+                if (isOpen(session.mobileSocket)) {
+                  session.mobileSocket.send(JSON.stringify({
+                    type: "peer",
+                    payload: { event: "plan-expired", message: "Your plan duration has expired." }
+                  }));
+                  session.mobileSocket.close(4403, "plan-expired");
+                }
+                if (isOpen(session.desktopSocket)) {
+                  session.desktopSocket.close(4403, "plan-expired");
+                }
+              } catch {}
+              sessions.delete(token);
+              continue;
+            }
+          }
+        } catch (err) {
+          console.error("[Session] Error checking mid-session plan expiry:", err.message);
+        }
+      }
+    }
+
+    if (session.expiresAt > now) continue;
     
     if (desktopConnected || mobileConnected) {
       // Extend session if still active
       session.expiresAt = now + SESSION_TTL_MS;
-      console.log(`[Session] Extended session for token ${token.substring(0, 8)}...`);
       continue;
     }
     
@@ -179,7 +217,49 @@ setInterval(() => {
     sessions.delete(token);
     console.log(`[Session] Deleted expired session for token ${token.substring(0, 8)}...`);
   }
-}).unref();
+}, 60 * 1000).unref();
+
+// Disposable email domains blocklist to prevent infinite free trial abuse
+const DISPOSABLE_EMAIL_DOMAINS = new Set([
+  "mailinator.com", "tempmail.com", "10minutemail.com", "guerrillamail.com",
+  "sharklasers.com", "dispostable.com", "yopmail.com", "trashmail.com",
+  "getairmail.com", "tempr.email", "mohmal.com", "generator.email",
+  "fakemailgenerator.com", "mytemp.email", "emailondeck.com", "throwawaymail.com",
+  "crazymailing.com", "armyspy.com", "cuvox.de", "dayrep.com", "fleckens.hu",
+  "gustr.com", "jourrapide.com", "rhyta.com", "superrito.com", "teleworm.us"
+]);
+
+function isDisposableEmail(email) {
+  if (!email || typeof email !== "string") return false;
+  const parts = email.toLowerCase().split("@");
+  if (parts.length !== 2) return false;
+  const domain = parts[1].trim();
+  return DISPOSABLE_EMAIL_DOMAINS.has(domain);
+}
+
+// In-memory rate limiter per IP / token
+const ipRateLimits = new Map();
+const aiRequestTracker = new Map(); // token -> { lastRequestAt, dailyCount, dateStr }
+
+function checkIpRateLimit(ip, limit = 60, windowMs = 60000) {
+  const now = Date.now();
+  let record = ipRateLimits.get(ip);
+  if (!record || now - record.startTime > windowMs) {
+    record = { count: 1, startTime: now };
+    ipRateLimits.set(ip, record);
+    return true;
+  }
+  record.count += 1;
+  return record.count <= limit;
+}
+
+// Clean up stale rate limits every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of ipRateLimits.entries()) {
+    if (now - record.startTime > 60000) ipRateLimits.delete(ip);
+  }
+}, 5 * 60 * 1000).unref();
 
 const app = express();
 app.use((req, res, next) => {
@@ -190,10 +270,19 @@ app.use((req, res, next) => {
     res.status(204).end();
     return;
   }
+
+  // Global IP rate limiting: 100 requests per minute per IP
+  const clientIp = req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
+  if (!checkIpRateLimit(clientIp, 100, 60000)) {
+    return res.status(429).json({ ok: false, error: "too-many-requests", message: "Rate limit exceeded. Please slow down." });
+  }
+
   next();
 });
-app.use(express.json({ limit: "20mb" }));
-app.use(express.urlencoded({ limit: "20mb", extended: true }));
+
+// Reduced from 20mb to 6mb to prevent memory exhaustion attacks
+app.use(express.json({ limit: "6mb" }));
+app.use(express.urlencoded({ limit: "6mb", extended: true }));
 const publicDir = path.join(__dirname, "public");
 
 app.get("/m/", (req, res) => {
@@ -503,6 +592,17 @@ app.post("/api/link/activate-trial", async (req, res) => {
     res.status(400).json({ ok: false, error: "missing-email" });
     return;
   }
+
+  // Security 1: Block disposable/temporary email services
+  if (isDisposableEmail(email)) {
+    console.warn(`[Trial] Blocked disposable email signup: ${email}`);
+    res.status(400).json({
+      ok: false,
+      error: "disposable-email-blocked",
+      message: "Temporary/disposable email addresses are not allowed. Please use a permanent email."
+    });
+    return;
+  }
   
   if (!supabase) {
     res.status(500).json({ ok: false, error: "server-config-error" });
@@ -510,6 +610,27 @@ app.post("/api/link/activate-trial", async (req, res) => {
   }
   
   try {
+    // Security 2: One-time trial check - prevent re-activation if user already used trial
+    const { data: existingProfile, error: fetchErr } = await supabase
+      .from("profiles")
+      .select("trial, plan_expires_at")
+      .eq("email", email)
+      .maybeSingle();
+
+    if (fetchErr) {
+      console.error(`[Trial] Check failed for ${email}:`, fetchErr.message);
+    }
+
+    if (existingProfile && existingProfile.trial === true) {
+      console.warn(`[Trial] Blocked duplicate trial claim for ${email}`);
+      res.status(403).json({
+        ok: false,
+        error: "trial-already-claimed",
+        message: "Free trial has already been used on this account. Please upgrade to Pro to continue."
+      });
+      return;
+    }
+
     // Activate trial for 10 minutes
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     
@@ -759,13 +880,39 @@ app.post("/api/analyze-screen", async (req, res) => {
     });
   }
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return res.status(500).json({
+  // Security 3: Cooldown and Daily Quota to prevent auto-clickers / API Denial-of-Wallet
+  const now = Date.now();
+  const todayStr = new Date().toISOString().split("T")[0];
+  const trackerKey = token || req.ip || "global";
+  let tracker = aiRequestTracker.get(trackerKey);
+
+  if (!tracker || tracker.dateStr !== todayStr) {
+    tracker = { lastRequestAt: 0, dailyCount: 0, dateStr: todayStr };
+    aiRequestTracker.set(trackerKey, tracker);
+  }
+
+  // 4-second cooldown between consecutive AI requests
+  if (now - tracker.lastRequestAt < 4000) {
+    const waitSec = Math.ceil((4000 - (now - tracker.lastRequestAt)) / 1000);
+    return res.status(429).json({
       ok: false,
-      error: "OpenAI API key not configured on server (please set OPENAI_API_KEY in Railway)."
+      error: "rate-limited",
+      message: `Please wait ${waitSec}s before requesting another AI analysis.`
     });
   }
+
+  // Daily quota: Max 300 answers per user per day to prevent runaway script abuse
+  const DAILY_AI_LIMIT = 300;
+  if (tracker.dailyCount >= DAILY_AI_LIMIT) {
+    return res.status(429).json({
+      ok: false,
+      error: "daily-quota-exceeded",
+      message: `Daily AI limit reached (${DAILY_AI_LIMIT} answers/day). Limit resets at midnight UTC.`
+    });
+  }
+
+  tracker.lastRequestAt = now;
+  tracker.dailyCount += 1;
 
   try {
     console.log("[Analyze-Screen] Step 1: Transcribing and classifying screen...");
