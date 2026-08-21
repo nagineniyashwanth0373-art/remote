@@ -32,13 +32,25 @@ let typeMode = false;
 let snapMode = false;
 let lastExtractedText = ""; // Store last OCR text
 
-function getInitialPlan() {
-  const url = new URL(location.href);
-  const p = (url.searchParams.get("plan") || "").trim().toLowerCase();
-  return p || "basic";
-}
+// Client plan is received securely from the server via session token & WebSocket signaling
+let clientPlan = "basic";
 
-let clientPlan = getInitialPlan();
+async function fetchSessionPlan() {
+  const token = getToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/link/status?token=${encodeURIComponent(token)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok && data.plan) {
+        clientPlan = String(data.plan).trim().toLowerCase();
+        updateAnsBtnAppearance();
+      }
+    }
+  } catch (e) {
+    console.log("[Mobile] Error checking session plan:", e.message);
+  }
+}
 
 function isProPlan() {
   return clientPlan === "pro" || clientPlan === "premium" || clientPlan === "enterprise";
@@ -56,6 +68,9 @@ function updateAnsBtnAppearance() {
     ansBtn.title = "Ans is a Pro feature (Locked on Trial/Basic)";
   }
 }
+
+// Fetch true plan on startup
+fetchSessionPlan();
 
 function setStatus(text) {
   statusEl.textContent = text;

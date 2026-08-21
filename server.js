@@ -537,11 +537,15 @@ app.get("/api/link/status", (req, res) => {
     return;
   }
   const info = linkStates.get(tokenParam);
-  if (!info) {
+  const session = sessions.get(tokenParam);
+  const plan = (info && info.plan) || (session && session.plan) || "";
+  const email = (info && info.email) || "";
+  
+  if (!info && !session) {
     res.json({ ok: true, linked: false });
     return;
   }
-  res.json({ ok: true, linked: true, email: info.email, plan: info.plan || "" });
+  res.json({ ok: true, linked: true, email: email, plan: plan });
 });
 
 app.get("/api/plan", async (req, res) => {
