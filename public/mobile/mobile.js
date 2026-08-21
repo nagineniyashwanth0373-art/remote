@@ -949,15 +949,23 @@ async function captureAndAnalyzeVisionScreen() {
   const imageData = canvas.toDataURL("image/jpeg", 0.85);
 
   try {
+    const urlParams = new URLSearchParams(location.search);
+    const sessionToken = urlParams.get("t") || "";
+
     const response = await fetch("/api/analyze-screen", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image: imageData })
+      body: JSON.stringify({ image: imageData, token: sessionToken })
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Server error (${response.status}): ${errorText}`);
+      let parsedError = errorText;
+      try {
+        const jsonErr = JSON.parse(errorText);
+        parsedError = jsonErr.message || jsonErr.error || errorText;
+      } catch {}
+      throw new Error(parsedError);
     }
 
     const result = await response.json();

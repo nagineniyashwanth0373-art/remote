@@ -717,12 +717,46 @@ Format:
   }
 });
 
-// Screen Analysis Endpoint (Vision)
+// Screen Analysis Endpoint (Vision with Server-Side Pro Plan Enforcement)
 app.post("/api/analyze-screen", async (req, res) => {
-  const { image, prompt } = req.body || {};
+  const { image, prompt, token } = req.body || {};
 
   if (!image || typeof image !== "string") {
     return res.status(400).json({ ok: false, error: "missing-image" });
+  }
+
+  // Server-side plan verification: Prevent users from bypassing plan check by editing URL
+  let isPro = false;
+  if (token && typeof token === "string") {
+    const session = sessions.get(token);
+    const linkState = linkStates.get(token);
+    const sessionPlan = (session && session.plan) || (linkState && linkState.plan) || "";
+    
+    if (["pro", "premium", "enterprise"].includes(sessionPlan.toLowerCase())) {
+      isPro = true;
+    } else if (linkState && linkState.email && supabase) {
+      try {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("plan")
+          .eq("email", linkState.email.toLowerCase())
+          .maybeSingle();
+        if (profile && ["pro", "premium", "enterprise"].includes((profile.plan || "").toLowerCase())) {
+          isPro = true;
+        }
+      } catch (err) {
+        console.error("[Analyze-Screen] DB plan check error:", err.message);
+      }
+    }
+  }
+
+  if (!isPro) {
+    console.warn(`[Analyze-Screen] 403 Forbidden: Blocked non-pro request (token: ${token ? token.substring(0, 8) + '...' : 'none'}).`);
+    return res.status(403).json({
+      ok: false,
+      error: "pro-required",
+      message: "AI Screen Analysis is available exclusively on Pro plans. Please upgrade to use this feature."
+    });
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
