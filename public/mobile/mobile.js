@@ -398,42 +398,42 @@ function teardown() {
   disconnectTimer = null;
 }
 
-// Type button - toggle type mode
-typeBtn.addEventListener("click", () => {
-  typeMode = !typeMode;
-  typeBtn.classList.toggle("active", typeMode);
-  typeSheet.hidden = !typeMode;
-  if (typeMode) {
-    // Disable other modes
-    dragMode = false;
-    dragBtn.classList.remove("active");
-    scrollMode = false;
-    scrollBtn.classList.remove("active");
-    typeInput.focus();
-    setStatus("Type mode - use mobile keyboard");
-  } else {
-    setStatus("Type mode disabled");
-  }
-});
+// Type button - toggle type mode (mobile fallback)
+if (typeBtn) {
+  typeBtn.addEventListener("click", () => {
+    typeMode = !typeMode;
+    typeBtn.classList.toggle("active", typeMode);
+    if (typeSheet) typeSheet.hidden = !typeMode;
+    if (typeMode) {
+      if (typeInput) typeInput.focus();
+      setStatus("Type mode active");
+    } else {
+      setStatus("Type mode disabled");
+    }
+  });
+}
 
-// Scroll button - toggle scroll mode
-scrollBtn.addEventListener("click", () => {
-  scrollMode = !scrollMode;
-  scrollBtn.classList.toggle("active", scrollMode);
-  if (scrollMode) {
-    // Disable other modes
-    dragMode = false;
-    dragBtn.classList.remove("active");
-    typeMode = false;
-    typeBtn.classList.remove("active");
-    typeSheet.hidden = true;
-    setStatus("Scroll mode enabled");
-  } else {
-    setStatus("Scroll mode disabled");
-  }
-});
+// Scroll button - toggle scroll mode (mobile fallback)
+if (scrollBtn) {
+  scrollBtn.addEventListener("click", () => {
+    scrollMode = !scrollMode;
+    scrollBtn.classList.toggle("active", scrollMode);
+    setStatus(scrollMode ? "Scroll mode enabled" : "Scroll mode disabled");
+  });
+}
 
-// Lock/Fix toggle button
+// Drag button - toggle drag mode (mobile fallback)
+if (dragBtn) {
+  dragBtn.addEventListener("click", () => {
+    if (isLocked) {
+      setStatus("🔒 Screen is locked (Fix Mode ON). Unlock to zoom/pan.");
+      return;
+    }
+    dragMode = !dragMode;
+    dragBtn.classList.toggle("active", dragMode);
+    setStatus(dragMode ? "Drag mode enabled" : "Drag mode disabled");
+  });
+}
 if (lockToggle) {
   lockToggle.addEventListener("click", () => {
     isLocked = !isLocked;
@@ -679,176 +679,101 @@ disconnectBtn.addEventListener("click", () => {
   setStatus("Disconnected.");
 });
 
-stage.addEventListener("dblclick", (evt) => {
-  if (isLocked) return;
-  if (zoom > 1.01) {
-    zoom = 1;
-    panX = 0;
-    panY = 0;
-    applyTransform();
-    return;
-  }
-  zoomAt(2, evt.clientX, evt.clientY);
-});
+// ===== SEAMLESS NATIVE REMOTE DESKTOP CONTROLS (Chrome Remote Desktop / AnyDesk style) =====
+let isMouseDown = false;
+let pointerMoved = false;
 
-const pointers = new Map();
-let dragActive = false;
-let dragStartedAt = 0;
-let lastMoveAt = 0;
-let lastScrollCenter = null;
-
-function sendMoveFromEvent(evt) {
+// 1. Mouse Move & Hover (Send exact normalized coordinates)
+touchLayer.addEventListener("pointermove", (evt) => {
   const p = getNormFromPoint(evt.clientX, evt.clientY);
   dcSend({ type: "input", payload: { type: "mouse-move", mode: "norm", x: p.x, y: p.y } });
-}
+  
+  if (isMouseDown) {
+    pointerMoved = true;
+  }
+});
 
+// 2. Mouse Down (Click or Drag Initiation)
 touchLayer.addEventListener("pointerdown", (evt) => {
   touchLayer.setPointerCapture(evt.pointerId);
-  pointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY, t: Date.now() });
-
-  if (pointers.size === 1) {
-    dragActive = false;
-    dragStartedAt = 0;
-    lastMoveAt = 0;
-    lastScrollCenter = null;
-    pinchStartDist = null;
-    pinchLastCenter = null;
-    
-    if (scrollMode) {
-      // In scroll mode: first move cursor to touch location, then prepare to scroll
-      const p = getNormFromPoint(evt.clientX, evt.clientY);
-      dcSend({ type: "input", payload: { type: "mouse-move", mode: "norm", x: p.x, y: p.y } });
-      lastScrollCenter = { cx: evt.clientX, cy: evt.clientY };
-    } else if (dragMode) {
-      // In drag mode: only zoom/pan the screen view, no desktop mouse actions
-      // Just track the pointer for potential zoom/pan gestures
-      // No mouse events sent to desktop
-    } else {
-      // Default mode: move cursor and click immediately on touch
-      const p = getNormFromPoint(evt.clientX, evt.clientY);
-      console.log("[Mobile] Clicking at:", p.x.toFixed(3), p.y.toFixed(3));
-      dcSend({ type: "input", payload: { type: "mouse-move", mode: "norm", x: p.x, y: p.y } });
-      dcSend({ type: "input", payload: { type: "mouse-click", button: "left", double: false, mode: "norm", x: p.x, y: p.y } });
-      console.log("[Mobile] Click sent");
-    }
-  } else {
-    lastScrollCenter = null;
-    const ids = Array.from(pointers.keys());
-    if (ids.length === 2) {
-      const a = pointers.get(ids[0]);
-      const b = pointers.get(ids[1]);
-      pinchStartDist = Math.hypot(a.x - b.x, a.y - b.y);
-      pinchStartZoom = zoom;
-      pinchLastCenter = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    }
-  }
+  isMouseDown = true;
+  pointerMoved = false;
+  
+  const p = getNormFromPoint(evt.clientX, evt.clientY);
+  // Position cursor first
+  dcSend({ type: "input", payload: { type: "mouse-move", mode: "norm", x: p.x, y: p.y } });
+  
+  // Right click or Left click press down
+  const button = evt.button === 2 ? "right" : "left";
+  dcSend({ type: "input", payload: { type: "mouse-toggle", button: button, down: true, mode: "norm", x: p.x, y: p.y } });
 });
 
-touchLayer.addEventListener("pointermove", (evt) => {
-  if (!pointers.has(evt.pointerId)) return;
-  const prev = pointers.get(evt.pointerId);
-  pointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY, t: prev.t });
-
-  if (pointers.size === 1) {
-    if (!scrollMode && !dragMode) {
-      // Default and click mode: do nothing on move (click already happened on pointerdown)
-      return;
-    }
-    
-    if (dragMode) {
-      // In drag mode: pan the screen with single finger drag
-      const dx = evt.clientX - prev.x;
-      const dy = evt.clientY - prev.y;
-      panX += dx;
-      panY += dy;
-      applyTransform();
-      return;
-    }
-    
-    if (scrollMode && lastScrollCenter) {
-      // In scroll mode, send scroll events based on vertical movement
-      const dy = evt.clientY - lastScrollCenter.cy;
-      // Only scroll on vertical movement, with reduced sensitivity
-      if (Math.abs(dy) > 5) {
-        lastScrollCenter = { cx: evt.clientX, cy: evt.clientY };
-        // Negative dy means scrolling up (finger moving up)
-        // Positive dy means scrolling down (finger moving down)
-        dcSend({ type: "input", payload: { type: "scroll", dx: 0, dy: Math.round(dy * 2) } });
-      }
-      return;
-    }
-    
-    // Default mode: do nothing on move
-    return;
-  }
-
-  if (pointers.size === 2) {
-    if (isLocked) return;
-    const ids = Array.from(pointers.keys());
-    const a = pointers.get(ids[0]);
-    const b = pointers.get(ids[1]);
-    const cx = (a.x + b.x) / 2;
-    const cy = (a.y + b.y) / 2;
-    const dist = Math.hypot(a.x - b.x, a.y - b.y);
-    if (pinchStartDist) {
-      if (pinchLastCenter) {
-        panX += cx - pinchLastCenter.x;
-        panY += cy - pinchLastCenter.y;
-      }
-      zoomAt(pinchStartZoom * (dist / pinchStartDist), cx, cy);
-      pinchLastCenter = { x: cx, y: cy };
-      return;
-    }
-    if (!lastScrollCenter) lastScrollCenter = { cx, cy };
-    const dy = cy - lastScrollCenter.cy;
-    const dx = cx - lastScrollCenter.cx;
-    lastScrollCenter = { cx, cy };
-    dcSend({ type: "input", payload: { type: "scroll", dx: Math.round(dx * 0.5), dy: Math.round(dy * 0.8) } });
-  }
-});
-
+// 3. Mouse Up (Release Drag or Complete Click)
 touchLayer.addEventListener("pointerup", (evt) => {
-  if (!pointers.has(evt.pointerId)) return;
-  const start = pointers.get(evt.pointerId);
-  pointers.delete(evt.pointerId);
+  if (!isMouseDown) return;
+  isMouseDown = false;
+  
+  const p = getNormFromPoint(evt.clientX, evt.clientY);
+  const button = evt.button === 2 ? "right" : "left";
+  
+  // Release mouse button on desktop
+  dcSend({ type: "input", payload: { type: "mouse-toggle", button: button, down: false, mode: "norm", x: p.x, y: p.y } });
+});
 
-  if (pointers.size === 0) {
-    lastScrollCenter = null;
-    pinchStartDist = null;
-    pinchLastCenter = null;
-    
-    if (!scrollMode && !dragMode) {
-      // Default mode: click already happened on pointerdown, do nothing here
-      return;
-    }
-    
-    if (dragMode && dragActive) {
-      // In drag mode, release mouse button
-      dragActive = false;
-      dcSend({ type: "input", payload: { type: "mouse-toggle", button: "left", down: false } });
-      return;
-    }
-    
-    if (dragActive) {
-      dragActive = false;
-      return;
-    }
+// 4. Double Click
+touchLayer.addEventListener("dblclick", (evt) => {
+  const p = getNormFromPoint(evt.clientX, evt.clientY);
+  dcSend({ type: "input", payload: { type: "mouse-click", button: "left", double: true, mode: "norm", x: p.x, y: p.y } });
+});
 
-    const dt = Date.now() - start.t;
-    const moved = Math.hypot(evt.clientX - start.x, evt.clientY - start.y);
-    // Only click in normal mode (not scroll mode, not drag mode)
-    if (!scrollMode && !dragMode && dt < 450 && moved < 10) {
-      sendMoveFromEvent(evt);
-      dcSend({ type: "input", payload: { type: "mouse-click", button: "left", double: false } });
-    }
+// 5. Native Mouse Wheel Scroll (Smooth natural desktop scroll)
+touchLayer.addEventListener("wheel", (evt) => {
+  evt.preventDefault();
+  const p = getNormFromPoint(evt.clientX, evt.clientY);
+  dcSend({ type: "input", payload: { type: "mouse-move", mode: "norm", x: p.x, y: p.y } });
+  
+  const dy = Math.round(evt.deltaY);
+  const dx = Math.round(evt.deltaX);
+  dcSend({ type: "input", payload: { type: "scroll", dx: dx, dy: dy } });
+}, { passive: false });
+
+// 6. Prevent default browser context menu on right click
+touchLayer.addEventListener("contextmenu", (evt) => {
+  evt.preventDefault();
+});
+
+// 7. Direct Physical Keyboard Input (Works globally while focused on remote desktop window)
+window.addEventListener("keydown", (e) => {
+  if (e.target && (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT")) return;
+  
+  const modifiers = [];
+  if (e.ctrlKey) modifiers.push("control");
+  if (e.shiftKey) modifiers.push("shift");
+  if (e.altKey) modifiers.push("alt");
+  if (e.metaKey) modifiers.push("command");
+
+  let key = e.key;
+  if (key === " ") key = "space";
+  else if (key === "Escape") key = "escape";
+  else if (key === "Enter") key = "enter";
+  else if (key === "Backspace") key = "backspace";
+  else if (key === "Tab") key = "tab";
+  else if (key === "ArrowUp") key = "up";
+  else if (key === "ArrowDown") key = "down";
+  else if (key === "ArrowLeft") key = "left";
+  else if (key === "ArrowRight") key = "right";
+  else if (key === "Delete") key = "delete";
+
+  dcSend({ type: "input", payload: { type: "key-tap", key: key, modifiers: modifiers } });
+  
+  if (["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Backspace", "Space"].includes(e.key)) {
+    e.preventDefault();
   }
 });
 
 touchLayer.addEventListener("pointercancel", () => {
-  pointers.clear();
-  dragActive = false;
-  pinchStartDist = null;
-  pinchLastCenter = null;
+  isMouseDown = false;
+  pointerMoved = false;
 });
 
 // Disconnect when page is being closed (not on minimize/app switch)
