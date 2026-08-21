@@ -33,13 +33,17 @@ let lastExtractedText = ""; // Store last OCR text
 function getInitialPlan() {
   const url = new URL(location.href);
   const p = (url.searchParams.get("plan") || "").trim().toLowerCase();
-  return p || "basic";
+  return p || "";
 }
 
 let clientPlan = getInitialPlan();
 
 function isProPlan() {
-  return clientPlan === "pro" || clientPlan === "premium" || clientPlan === "enterprise";
+  const p = (clientPlan || "").trim().toLowerCase();
+  // Match any variation of pro, paid, premium, enterprise, standard
+  if (!p) return true; // Default to allowing if on active connection until verified
+  if (p === "basic" || p === "trial" || p === "free") return false;
+  return true;
 }
 
 function updateAnsBtnAppearance() {
@@ -52,6 +56,23 @@ function updateAnsBtnAppearance() {
     ansBtn.innerHTML = "Ans 🔒";
     ansBtn.classList.add("locked-tool");
     ansBtn.title = "Ans is a Pro feature (Locked on Trial/Basic)";
+  }
+}
+
+async function verifyPlanWithServer() {
+  const token = getToken();
+  if (!token) return;
+  try {
+    const res = await fetch(`/api/link/status?token=${encodeURIComponent(token)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.linked && data.plan) {
+        clientPlan = String(data.plan).trim().toLowerCase();
+        updateAnsBtnAppearance();
+      }
+    }
+  } catch (e) {
+    console.log("[Mobile] Plan verification error:", e.message);
   }
 }
 
@@ -965,4 +986,5 @@ if (aiAnsCopy) {
 }
 
 updateAnsBtnAppearance();
+verifyPlanWithServer();
 connectSignaling();

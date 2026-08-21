@@ -961,7 +961,7 @@ wss.on("connection", (ws, req) => {
 
     if (msg.type === "hello") {
       if (msg.role === "desktop") {
-        console.log(`[Hello] Desktop connected, token: ${token.substring(0, 8)}...`);
+        console.log(`[Hello] Desktop connected, token: ${token.substring(0, 8)}..., plan: ${msg.plan || 'basic'}`);
         if (session.desktopSocket && session.desktopSocket !== ws) {
           console.log(`[Hello] Desktop already connected, rejecting`);
           try {
@@ -970,10 +970,13 @@ wss.on("connection", (ws, req) => {
           return;
         }
         session.desktopSocket = ws;
+        if (msg.plan) {
+          session.plan = String(msg.plan).trim().toLowerCase();
+        }
         console.log(`[Hello] Desktop socket stored, mobile exists: ${!!session.mobileSocket}`);
         if (isOpen(session.mobileSocket)) {
           try {
-            session.mobileSocket.send(JSON.stringify({ type: "peer", payload: { event: "desktop-online" } }));
+            session.mobileSocket.send(JSON.stringify({ type: "peer", payload: { event: "desktop-online", plan: session.plan || "basic" } }));
           } catch {}
           try {
             ws.send(JSON.stringify({ type: "peer", payload: { event: "mobile-online" } }));
@@ -1002,7 +1005,7 @@ wss.on("connection", (ws, req) => {
             session.desktopSocket.send(JSON.stringify({ type: "peer", payload: { event: "mobile-online" } }));
           } catch {}
           try {
-            ws.send(JSON.stringify({ type: "peer", payload: { event: "desktop-online" } }));
+            ws.send(JSON.stringify({ type: "peer", payload: { event: "desktop-online", plan: session.plan || "basic" } }));
           } catch {}
         } else {
           try {
