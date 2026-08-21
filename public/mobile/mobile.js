@@ -8,6 +8,7 @@ const stage = document.getElementById("stage");
 const dragBtn = document.getElementById("dragBtn");
 const scrollBtn = document.getElementById("scrollBtn");
 const typeBtn = document.getElementById("typeBtn");
+const lockToggle = document.getElementById("lockToggle");
 const micToggle = document.getElementById("micToggle");
 const cameraToggle = document.getElementById("cameraToggle");
 const stopTypingBtn = document.getElementById("stopTypingBtn");
@@ -22,6 +23,7 @@ const aiAnsCopy = document.getElementById("aiAnsCopy");
 const aiAnsRefresh = document.getElementById("aiAnsRefresh");
 
 // State variables
+let isLocked = false;
 let micEnabled = false;
 let cameraEnabled = false;
 let dragMode = false;
@@ -416,9 +418,47 @@ scrollBtn.addEventListener("click", () => {
   }
 });
 
+// Lock/Fix toggle button
+if (lockToggle) {
+  lockToggle.addEventListener("click", () => {
+    isLocked = !isLocked;
+    lockToggle.classList.toggle("lock-active", isLocked);
+    lockToggle.innerHTML = isLocked ? "🔒" : "🔓";
+    lockToggle.title = isLocked ? "Screen & Connection Locked (Fix Mode ON)" : "Lock Screen & Connection (Fix Mode)";
+    
+    if (isLocked) {
+      // Reset any active zoom or pan so screen is perfectly fixed in full view
+      zoom = 1;
+      panX = 0;
+      panY = 0;
+      applyTransform();
+      
+      // Disable drag mode if active
+      if (dragMode) {
+        dragMode = false;
+        dragBtn.classList.remove("active");
+      }
+      
+      disconnectBtn.style.opacity = "0.4";
+      disconnectBtn.style.pointerEvents = "none";
+      disconnectBtn.title = "Disconnect is locked (Unlock first)";
+      setStatus("🔒 Locked: Disconnect disabled & screen zoom fixed");
+    } else {
+      disconnectBtn.style.opacity = "1";
+      disconnectBtn.style.pointerEvents = "auto";
+      disconnectBtn.title = "Disconnect";
+      setStatus("🔓 Unlocked: Normal mode");
+    }
+  });
+}
+
 // Drag button - toggle drag mode
 // When active, touch only zooms/pans the screen view, no desktop mouse actions
 dragBtn.addEventListener("click", () => {
+  if (isLocked) {
+    setStatus("🔒 Screen is locked (Fix Mode ON). Unlock to zoom/pan.");
+    return;
+  }
   dragMode = !dragMode;
   dragBtn.classList.toggle("active", dragMode);
   if (dragMode) {
@@ -615,12 +655,17 @@ if (stopTypingBtn) {
 }
 
 disconnectBtn.addEventListener("click", () => {
+  if (isLocked) {
+    setStatus("🔒 Disconnect is locked! Tap the lock button to unlock first.");
+    return;
+  }
   dcSend({ type: "command", command: "disconnect" });
   teardown();
   setStatus("Disconnected.");
 });
 
 stage.addEventListener("dblclick", (evt) => {
+  if (isLocked) return;
   if (zoom > 1.01) {
     zoom = 1;
     panX = 0;
@@ -723,6 +768,7 @@ touchLayer.addEventListener("pointermove", (evt) => {
   }
 
   if (pointers.size === 2) {
+    if (isLocked) return;
     const ids = Array.from(pointers.keys());
     const a = pointers.get(ids[0]);
     const b = pointers.get(ids[1]);
