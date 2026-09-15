@@ -184,11 +184,16 @@ setInterval(async () => {
         try {
           const { data: user, error } = await supabase
             .from("users")
-            .select("seconds_remaining, seconds_used")
+            .select("plan, seconds_remaining, seconds_used")
             .eq("email", email.toLowerCase())
             .maybeSingle();
 
           if (!error && user) {
+            // Lifetime BYOK plan has unlimited connection time
+            if (user.plan === "pro plus+") {
+              continue;
+            }
+
             const currentSeconds = user.seconds_remaining ?? 0;
             if (currentSeconds <= 0) {
               console.log(`[Usage] Connection time exhausted for ${email}. Terminating.`);
@@ -492,6 +497,156 @@ app.get("/api/plan", async (req, res) => {
   });
 });
 
+// Catalog of plans defined in public.plans
+const AVAILABLE_PLANS = [
+  {
+    id: "ee803f63-7ffc-4c93-bd79-2cb349c318b1",
+    tier: "basic",
+    name: "Basic Free Tier",
+    price: 0,
+    included_minutes: 0,
+    included_responses: 0,
+    dodo_product_id: null
+  },
+  {
+    id: "4d569314-3b27-45c8-93ad-3d5c2eebffc0",
+    tier: "usage",
+    name: "Standard Plan",
+    price: 8,
+    included_minutes: 200,
+    included_responses: 500,
+    dodo_product_id: "pdt_0NnIPft32K3WxEEJbH04J"
+  },
+  {
+    id: "fdbc4259-cdb8-42b8-a0d5-02b8a7392812",
+    tier: "usage",
+    name: "Pro+ Pro (Most Popular)",
+    price: 15,
+    included_minutes: 500,
+    included_responses: 1000,
+    dodo_product_id: "pdt_0NnIQ5VyQfhSXYsFLcojZ"
+  },
+  {
+    id: "867a98bf-9dd0-4b22-bbf5-86d19193632e",
+    tier: "usage",
+    name: "Max+ Pro",
+    price: 25,
+    included_minutes: 1000,
+    included_responses: 2000,
+    dodo_product_id: "pdt_0NnIQFN75jtyT7fIvHQd1"
+  },
+  {
+    id: "08545cec-6a37-4922-8456-54481379e290",
+    tier: "usage",
+    name: "Ultra+ Pro",
+    price: 35,
+    included_minutes: 2000,
+    included_responses: 3000,
+    dodo_product_id: "pdt_0NnIQOPYDlQBXyoHj0Mxv"
+  },
+  {
+    id: "13969aad-7309-40ec-9b54-70b39d5b13f6",
+    tier: "pro plus+",
+    name: "Pro Plus+ Lifetime (BYOK)",
+    price: 49,
+    included_minutes: 0,
+    included_responses: 0,
+    dodo_product_id: "pdt_0NnIQqc0EzhEoVKHtBWTx"
+  }
+];
+
+app.get("/api/plans", async (req, res) => {
+  try {
+    if (supabase) {
+      const { data, error } = await supabase
+        .from("plans")
+        .select("id, tier, name, price, included_minutes, included_responses, dodo_product_id")
+        .order("price", { ascending: true });
+      if (!error && data && data.length > 0) {
+        return res.json({ ok: true, plans: data });
+      }
+    }
+    res.json({ ok: true, plans: AVAILABLE_PLANS });
+  } catch (err) {
+    res.json({ ok: true, plans: AVAILABLE_PLANS });
+  }
+});
+
+// Dodo Payments Webhook Endpoint to credit purchases directly to user's usage balance
+app.post("/api/webhook/dodo", async (req, res) => {
+  const event = req.body || {};
+  console.log("[Dodo Webhook] Event received:", event.type || event.event || "unknown");
+
+  try {
+    const data = event.data || event;
+    const customerEmail = (data.customer && data.customer.email) || data.email || (data.metadata && data.metadata.email);
+    const productId = data.product_id || (data.product && data.product.id) || data.dodo_product_id;
+
+    if (!customerEmail || !productId) {
+      return res.status(200).json({ ok: true, message: "No email or product_id found in event" });
+    }
+
+    const email = String(customerEmail).trim().toLowerCase();
+
+    // Query plan by dodo_product_id
+    let plan = null;
+    if (supabase) {
+      const { data: dbPlan } = await supabase
+        .from("plans")
+        .select("id, tier, name, price, included_minutes, included_responses, dodo_product_id")
+        .eq("dodo_product_id", productId)
+        .maybeSingle();
+      plan = dbPlan;
+    }
+    if (!plan) {
+      plan = AVAILABLE_PLANS.find(p => p.dodo_product_id === productId);
+    }
+
+    if (!plan) {
+      console.warn(`[Dodo Webhook] No matching plan found for product: ${productId}`);
+      return res.status(200).json({ ok: true, message: "Unrecognized product ID" });
+    }
+
+    let user = await fetchProfileByEmail(email);
+    if (!user && supabase) {
+      console.warn(`[Dodo Webhook] User ${email} not yet registered in database.`);
+      return res.status(200).json({ ok: true, message: "User not found" });
+    }
+
+    if (user && supabase) {
+      const isLifetime = plan.tier === "pro plus+";
+      const addSeconds = (plan.included_minutes || 0) * 60;
+      const addResponses = plan.included_responses || 0;
+
+      const updateFields = {
+        plan: plan.tier,
+        updated_at: new Date().toISOString()
+      };
+
+      if (!isLifetime) {
+        updateFields.seconds_remaining = (user.seconds_remaining || 0) + addSeconds;
+        updateFields.responses_remaining = (user.responses_remaining || 0) + addResponses;
+      }
+
+      const { error: updateErr } = await supabase
+        .from("users")
+        .update(updateFields)
+        .eq("email", email);
+
+      if (updateErr) {
+        console.error(`[Dodo Webhook] Error updating user ${email}:`, updateErr.message);
+      } else {
+        console.log(`[Dodo Webhook] Successfully credited plan '${plan.name}' to ${email}`);
+      }
+    }
+
+    return res.json({ ok: true, credited: true });
+  } catch (err) {
+    console.error("[Dodo Webhook] Error processing event:", err.message);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.post("/api/link/logout", async (req, res) => {
   const body = req.body || {};
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
@@ -646,7 +801,7 @@ app.post("/api/snap", async (req, res) => {
       return;
     }
     
-    // Check if user has responses remaining
+    // Check if user has responses remaining or is on BYOK plan
     let userEmail = await getEmailFromAuthHeader(req);
     if (!userEmail && req.body && req.body.email) {
       userEmail = String(req.body.email).trim().toLowerCase();
@@ -655,7 +810,10 @@ app.post("/api/snap", async (req, res) => {
     if (userEmail && supabase) {
       userRecord = await fetchProfileByEmail(userEmail);
     }
-    if (userRecord && (userRecord.responses_remaining ?? 0) <= 0) {
+    const customOpenAiKey = req.headers["x-openai-key"] || (req.body && req.body.openaiKey) || null;
+    const isByokPlan = userRecord && userRecord.plan === "pro plus+";
+
+    if (!customOpenAiKey && userRecord && !isByokPlan && (userRecord.responses_remaining ?? 0) <= 0) {
       res.status(403).json({
         text: finalText,
         error: "insufficient-responses",
@@ -664,19 +822,24 @@ app.post("/api/snap", async (req, res) => {
       return;
     }
 
-    // Check if OpenAI API key is configured
-    if (!process.env.OPENAI_API_KEY) {
+    // Check if OpenAI API key is configured or provided
+    const activeApiKey = customOpenAiKey || process.env.OPENAI_API_KEY;
+    if (!activeApiKey) {
       console.log("[Snap] OpenAI API key not configured, returning text only");
       res.json({
         text: finalText,
-        answer: "OpenAI API key not configured. Add OPENAI_API_KEY environment variable for AI analysis."
+        answer: isByokPlan 
+          ? "Pro Plus+ Lifetime (BYOK) plan: Please provide your OpenAI API key."
+          : "OpenAI API key not configured. Add OPENAI_API_KEY environment variable for AI analysis."
       });
       return;
     }
+
+    const aiClient = customOpenAiKey ? new OpenAI({ apiKey: customOpenAiKey }) : openai;
     
     // Send to OpenAI for analysis with improved prompt
     console.log("[Snap] Sending to OpenAI...");
-    const completion = await openai.chat.completions.create({
+    const completion = await aiClient.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -702,8 +865,8 @@ Format:
     const aiAnswer = completion.choices[0]?.message?.content?.trim() || "Could not determine answer";
     console.log("[Snap] AI answer:", aiAnswer.substring(0, 150));
     
-    // Deduct 1 response
-    if (userRecord && supabase) {
+    // Deduct 1 response for standard usage users
+    if (userRecord && supabase && !isByokPlan && !customOpenAiKey) {
       const newRemaining = Math.max(0, (userRecord.responses_remaining || 0) - 1);
       const newUsed = (userRecord.responses_used || 0) + 1;
       await supabase
@@ -756,7 +919,10 @@ app.post("/api/analyze-screen", async (req, res) => {
     userRecord = await fetchProfileByEmail(userEmail);
   }
 
-  if (userRecord) {
+  const customOpenAiKey = req.headers["x-openai-key"] || (req.body && req.body.openaiKey) || null;
+  const isByokPlan = userRecord && userRecord.plan === "pro plus+";
+
+  if (userRecord && !isByokPlan && !customOpenAiKey) {
     const remaining = userRecord.responses_remaining ?? 0;
     if (remaining <= 0) {
       console.warn(`[Analyze-Screen] 403 Blocked: 0 AI responses remaining for ${userEmail}`);
@@ -767,6 +933,20 @@ app.post("/api/analyze-screen", async (req, res) => {
       });
     }
   }
+
+  // Check if OpenAI API key is configured or provided
+  const activeApiKey = customOpenAiKey || process.env.OPENAI_API_KEY;
+  if (!activeApiKey) {
+    return res.status(403).json({
+      ok: false,
+      error: isByokPlan ? "byok-key-required" : "missing-api-key",
+      message: isByokPlan
+        ? "Pro Plus+ Lifetime (BYOK) plan: Please configure your OpenAI API key."
+        : "OpenAI API key not configured on server."
+    });
+  }
+
+  const aiClient = customOpenAiKey ? new OpenAI({ apiKey: customOpenAiKey }) : openai;
 
   // Security 3: Cooldown and Daily Quota to prevent auto-clickers / API Denial-of-Wallet
   const now = Date.now();
@@ -807,7 +987,7 @@ app.post("/api/analyze-screen", async (req, res) => {
     const base64Data = image.startsWith("data:") ? image : `data:image/jpeg;base64,${image}`;
 
     // Step 1: Extract text and classify the screen type
-    const extractionResponse = await openai.chat.completions.create({
+    const extractionResponse = await aiClient.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -867,7 +1047,7 @@ Respond strictly in this JSON format:
     if (contentType === "MCQ") {
       console.log("[Analyze-Screen] Solving MCQ with o3-mini...");
       try {
-        const solverResponse = await openai.chat.completions.create({
+        const solverResponse = await aiClient.chat.completions.create({
           model: "o3-mini",
           messages: [
             {
@@ -892,7 +1072,7 @@ Format:
         aiAnswer = solverResponse.choices[0]?.message?.content?.trim() || "";
       } catch (o3Err) {
         console.warn("[Analyze-Screen] o3-mini fallback to gpt-4o:", o3Err.message);
-        const fallbackResponse = await openai.chat.completions.create({
+        const fallbackResponse = await aiClient.chat.completions.create({
           model: "gpt-4o",
           messages: [
             {
@@ -918,7 +1098,7 @@ Format:
     // ROUTE 2: Coding Problem / Code Fix -> Use gpt-4o-mini (Fast & keeps existing methods/classes/parameters)
     else if (contentType === "CODING") {
       console.log("[Analyze-Screen] Solving Coding task with gpt-4o-mini...");
-      const codeResponse = await openai.chat.completions.create({
+      const codeResponse = await aiClient.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           {
@@ -948,7 +1128,7 @@ Provide the exact working code fix that integrates seamlessly with existing code
     // ROUTE 3: General Text / Image / Conceptual Question -> Use gpt-4o-mini
     else {
       console.log("[Analyze-Screen] Explaining General content with gpt-4o-mini...");
-      const generalResponse = await openai.chat.completions.create({
+      const generalResponse = await aiClient.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           {
@@ -971,7 +1151,8 @@ ${extractedText}
 
     console.log("[Analyze-Screen] Final answer ready:", aiAnswer.substring(0, 100));
 
-    if (userRecord && supabase) {
+    // Deduct 1 response only for standard usage users (not BYOK / custom key)
+    if (userRecord && supabase && !isByokPlan && !customOpenAiKey) {
       const newRemaining = Math.max(0, (userRecord.responses_remaining || 0) - 1);
       const newUsed = (userRecord.responses_used || 0) + 1;
       await supabase

@@ -394,26 +394,38 @@ async function refreshPlanAndEnforce() {
   }
 
   // Update usage pills
+  const isLifetime = currentAccount.plan === "pro plus+";
   const resp = currentAccount.responses_remaining ?? 0;
   const sec = currentAccount.seconds_remaining ?? 0;
 
   if (responsesPill) {
-    responsesPill.textContent = `✨ AI: ${resp} left`;
-    responsesPill.classList.remove("good", "bad");
-    responsesPill.classList.add(resp > 0 ? "good" : "bad");
+    if (isLifetime) {
+      responsesPill.textContent = "✨ AI: BYOK (Custom Key)";
+      responsesPill.classList.remove("bad");
+      responsesPill.classList.add("good");
+    } else {
+      responsesPill.textContent = `✨ AI: ${resp} left`;
+      responsesPill.classList.remove("good", "bad");
+      responsesPill.classList.add(resp > 0 ? "good" : "bad");
+    }
   }
   if (secondsPill) {
-    secondsPill.textContent = `⏱️ Time: ${formatUsageSeconds(sec)}`;
-    secondsPill.classList.remove("good", "bad");
-    secondsPill.classList.add(sec > 0 ? "good" : "bad");
+    if (isLifetime) {
+      secondsPill.textContent = "⏱️ Time: Lifetime (Unlimited)";
+      secondsPill.classList.remove("bad");
+      secondsPill.classList.add("good");
+    } else {
+      secondsPill.textContent = `⏱️ Time: ${formatUsageSeconds(sec)}`;
+      secondsPill.classList.remove("good", "bad");
+      secondsPill.classList.add(sec > 0 ? "good" : "bad");
+    }
   }
 
   const sessionActive = started || uiConnected;
 
-  // Enforce usage model: seconds_remaining controls session start
-  if (sec > 0) {
+  // Enforce usage model: seconds_remaining controls session start (or lifetime bypass)
+  if (isLifetime || sec > 0) {
     if (startSessionBtn) startSessionBtn.style.display = "block";
-
     if (planWarning) planWarning.style.display = "none";
   } else {
     if (startSessionBtn) startSessionBtn.style.display = "none";
@@ -437,9 +449,10 @@ async function refreshPlanAndEnforce() {
 
 async function handleStartSession() {
   if (!currentAccount) return;
+  const isLifetime = currentAccount.plan === "pro plus+";
   const sec = currentAccount.seconds_remaining ?? 0;
   
-  if (sec <= 0) {
+  if (!isLifetime && sec <= 0) {
     if (startSessionBtn) startSessionBtn.style.display = "none";
     alert("0 connection seconds remaining. Please recharge your balance to start a session.");
     return;
@@ -1285,7 +1298,7 @@ function connectSignaling() {
        return;
     }
     if (evt.code === 4003) {
-       performDesktopDisconnect("Plan Restriction: Basic plan supports LAN only.");
+       performDesktopDisconnect("Plan Restriction: Please recharge your usage balance to continue.");
        return;
     }
 
@@ -1309,7 +1322,7 @@ async function loadSessionInfo() {
   
   if (sessionInfo && sessionInfo.expiresAt && sessionInfo.expiresAt <= Date.now() + 2000) {
      if (planWarning) {
-       planWarning.textContent = "Trial session already used or expired.";
+       planWarning.textContent = "Session expired. Please start a new session.";
        planWarning.style.display = "block";
      }
      return;

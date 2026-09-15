@@ -46,13 +46,23 @@ function formatUsageSeconds(sec) {
 }
 
 function updateUsageBadges() {
-  if (timeBadge && remainingSeconds !== null) {
-    timeBadge.textContent = `⏱️ ${formatUsageSeconds(remainingSeconds)}`;
-    timeBadge.style.color = remainingSeconds <= 60 ? "#f87171" : "#e2e8f0";
+  if (timeBadge) {
+    if (clientPlan === "pro plus+") {
+      timeBadge.textContent = "⏱️ Lifetime";
+      timeBadge.style.color = "#4ade80";
+    } else if (remainingSeconds !== null) {
+      timeBadge.textContent = `⏱️ ${formatUsageSeconds(remainingSeconds)}`;
+      timeBadge.style.color = remainingSeconds <= 60 ? "#f87171" : "#e2e8f0";
+    }
   }
-  if (aiBadge && remainingResponses !== null) {
-    aiBadge.textContent = `✨ ${remainingResponses}`;
-    aiBadge.style.color = remainingResponses <= 0 ? "#f87171" : "#e2e8f0";
+  if (aiBadge) {
+    if (clientPlan === "pro plus+") {
+      aiBadge.textContent = "✨ BYOK";
+      aiBadge.style.color = "#4ade80";
+    } else if (remainingResponses !== null) {
+      aiBadge.textContent = `✨ ${remainingResponses}`;
+      aiBadge.style.color = remainingResponses <= 0 ? "#f87171" : "#e2e8f0";
+    }
   }
 }
 
@@ -74,6 +84,7 @@ async function fetchSessionPlan() {
             if (pRes.ok) {
               const pData = await pRes.json();
               if (pData.ok) {
+                if (pData.plan) clientPlan = String(pData.plan).trim().toLowerCase();
                 if (typeof pData.responses_remaining === "number") remainingResponses = pData.responses_remaining;
                 if (typeof pData.seconds_remaining === "number") remainingSeconds = pData.seconds_remaining;
                 updateUsageBadges();
@@ -91,6 +102,12 @@ async function fetchSessionPlan() {
 
 function updateAnsBtnAppearance() {
   if (!ansBtn) return;
+  if (clientPlan === "pro plus+") {
+    ansBtn.innerHTML = "Ans 💡";
+    ansBtn.classList.remove("locked-tool");
+    ansBtn.title = "AI Screen Analysis (BYOK)";
+    return;
+  }
   if (remainingResponses !== null && remainingResponses <= 0) {
     ansBtn.innerHTML = "Ans 🔒";
     ansBtn.classList.add("locked-tool");
