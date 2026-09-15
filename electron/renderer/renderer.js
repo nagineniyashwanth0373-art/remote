@@ -22,7 +22,7 @@ const logoutBtn = document.getElementById("logoutBtn");
 const userLabel = document.getElementById("userLabel");
 const startSection = document.getElementById("startSection");
 const startSessionBtn = document.getElementById("startSessionBtn");
-const activateTrialBtn = document.getElementById("activateTrialBtn");
+
 const planWarning = document.getElementById("planWarning");
 const sessionSub = document.getElementById("sessionSub");
 const clientChoiceBackdrop = document.getElementById("clientChoiceBackdrop");
@@ -137,7 +137,7 @@ function showSessionView() {
   controllerType = "mobile";
 
   if (startSessionBtn) startSessionBtn.style.display = "none";
-  if (activateTrialBtn) activateTrialBtn.style.display = "none";
+
 
   // Stop any previous sessions if not connected
   if (!uiConnected) {
@@ -364,8 +364,6 @@ async function refreshPlanAndEnforce() {
     currentAccount = {
       email: status.email,
       plan: status.plan || "basic",
-      trial: status.trial,
-      expiresAt: status.expiresAt,
       responses_remaining: status.responses_remaining ?? 0,
       responses_used: status.responses_used ?? 0,
       seconds_remaining: status.seconds_remaining ?? 0,
@@ -378,8 +376,6 @@ async function refreshPlanAndEnforce() {
         currentAccount = {
           email: refreshed.email,
           plan: refreshed.plan || "basic",
-          trial: refreshed.trial,
-          expiresAt: refreshed.plan_expires_at,
           responses_remaining: refreshed.responses_remaining ?? 0,
           seconds_remaining: refreshed.seconds_remaining ?? 0,
         };
@@ -417,7 +413,7 @@ async function refreshPlanAndEnforce() {
   // Enforce usage model: seconds_remaining controls session start
   if (sec > 0) {
     if (startSessionBtn) startSessionBtn.style.display = "block";
-    if (activateTrialBtn) activateTrialBtn.style.display = "none";
+
     if (planWarning) planWarning.style.display = "none";
   } else {
     if (startSessionBtn) startSessionBtn.style.display = "none";
@@ -437,30 +433,7 @@ async function refreshPlanAndEnforce() {
   }
 }
 
-if (activateTrialBtn) {
-  activateTrialBtn.addEventListener("click", async () => {
-    if (currentAccount && currentAccount.trial === true) {
-      return;
-    }
-    activateTrialBtn.disabled = true;
-    activateTrialBtn.textContent = "Activating...";
-    try {
-      const success = await window.bridge.activateTrial();
-      if (success) {
-        await refreshPlanAndEnforce();
-      } else {
-        alert("Failed to activate trial. Please try again.");
-        activateTrialBtn.disabled = false;
-        activateTrialBtn.textContent = "Activate 10m Trial";
-      }
-    } catch (e) {
-      console.error(e);
-      alert("Error activating trial.");
-      activateTrialBtn.disabled = false;
-      activateTrialBtn.textContent = "Activate 10m Trial";
-    }
-  });
-}
+
 
 async function handleStartSession() {
   if (!currentAccount) return;

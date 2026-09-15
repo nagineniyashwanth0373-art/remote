@@ -26,15 +26,12 @@ contextBridge.exposeInMainWorld("bridge", {
     return ipcRenderer.invoke("get-desktop-source-id");
   },
   loginWithEmail: (email, force) => ipcRenderer.invoke("login-with-email", email, force),
-  generateLinkCode: () => ipcRenderer.invoke("generate-link-code"),
-  checkLinkCode: (code) => ipcRenderer.invoke("check-link-code", code),
   getStoredAccount: () => ipcRenderer.invoke("get-stored-account"),
   setStoredAccount: (account) => ipcRenderer.invoke("set-stored-account", account),
   clearStoredAccount: () => ipcRenderer.invoke("clear-stored-account"),
   logout: (email) => ipcRenderer.invoke("logout", email),
   refreshPlan: (email) => ipcRenderer.invoke("refresh-plan", email),
   getUserStatus: () => ipcRenderer.invoke("get-user-status"),
-  activateTrial: () => ipcRenderer.invoke("activate-trial"),
   getScreenSize: () => ipcRenderer.invoke("get-screen-size"),
   onSessionStatus: (handler) => {
     const listener = (_evt, payload) => handler(payload);

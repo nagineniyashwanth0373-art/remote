@@ -99,11 +99,6 @@ function getBestLanIPv4() {
 function getCurrentPlan() {
   const acc = loadStoredAccount();
   if (!acc) return "basic";
-  if (acc.plan === "trial" && acc.plan_expires_at) {
-    if (new Date(acc.plan_expires_at) < new Date()) {
-      return "basic";
-    }
-  }
   return acc.plan || "basic";
 }
 
@@ -240,65 +235,7 @@ async function updateProfileVerifier(email, status) {
   }
 }
 
-async function updateProfileTrial(email, status) {
-  const emailLower = email.toLowerCase();
-  console.log(`[Trial] Updating trial status for ${emailLower} to ${status}`);
 
-  // 1. Try Direct DB Update (if keys available)
-  if (supabase) {
-    try {
-      const updates = { 
-        seconds_remaining: 600, 
-        responses_remaining: 5,
-        updated_at: new Date().toISOString() 
-      };
-      const { data, error } = await supabase
-        .from("users")
-        .update(updates)
-        .eq("email", emailLower)
-        .select();
-
-      if (!error && data && data.length > 0) {
-        console.log(`[Trial] Successfully updated via DB.`);
-        return true;
-      }
-      if (error) console.warn(`[Trial] DB Update failed: ${error.message}`);
-    } catch (err) {
-      console.warn(`[Trial] DB Exception: ${err.message}`);
-    }
-  }
-
-  // 2. Try API Update (fallback)
-  // Only if status is true (activate).
-  if (status === true) {
-      const publicBase = getResolvedPublicBaseUrl();
-      // Use public URL if available, otherwise local (dev)
-      const baseUrl = publicBase ? publicBase : getLocalAccountBaseUrl();
-      
-      const url = new URL(baseUrl.toString());
-      url.pathname = joinUrlPath(baseUrl.pathname, "api/link/activate-trial");
-      
-      console.log(`[Trial] Attempting API update via ${url.toString()}`);
-      
-      try {
-        const res = await fetchJson(url.toString(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: emailLower })
-        });
-        
-        if (res && res.ok) {
-           console.log(`[Trial] API update successful.`);
-           return true;
-        }
-        console.warn(`[Trial] API update failed:`, res);
-      } catch (e) {
-        console.warn(`[Trial] API fetch exception:`, e);
-      }
-  }
-
-  return false;
-}
 
 function getPublicMobileUrlBase() {
   const v = process.env.PUBLIC_MOBILE_URL_BASE;
@@ -344,8 +281,7 @@ function loadStoredAccount() {
       return cachedAccount;
     }
     const plan = typeof parsed.plan === "string" && parsed.plan ? parsed.plan : "basic";
-    const expiresAt = typeof parsed.plan_expires_at === "string" ? parsed.plan_expires_at : null;
-    cachedAccount = { email, plan, plan_expires_at: expiresAt };
+    cachedAccount = { email, plan };
     return cachedAccount;
   } catch {
     cachedAccount = null;
@@ -364,8 +300,7 @@ function saveStoredAccount(account) {
     return;
   }
   const plan = typeof account.plan === "string" && account.plan ? account.plan : "basic";
-  const expiresAt = typeof account.plan_expires_at === "string" ? account.plan_expires_at : null;
-  const value = { email, plan, plan_expires_at: expiresAt };
+  const value = { email, plan };
   try {
     const p = getAccountStorePath();
     fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -514,11 +449,8 @@ async function getMobileUrl() {
   const params = new URLSearchParams();
   params.set("t", token);
 
-  const plan = getCurrentPlan();
-  const isTrial = plan === "basic" || plan === "trial";
-
   const publicBase = getResolvedPublicBaseUrl();
-  if (publicBase && !isTrial) {
+  if (publicBase) {
     const url = new URL(publicBase.toString());
     url.pathname = joinUrlPath(publicBase.pathname, "m/");
     url.search = params.toString();
@@ -538,11 +470,8 @@ async function getDesktopUrl() {
   const params = new URLSearchParams();
   params.set("t", token);
 
-  const plan = getCurrentPlan();
-  const isTrial = plan === "basic" || plan === "trial";
-
   const publicBase = getResolvedPublicBaseUrl();
-  if (publicBase && !isTrial) {
+  if (publicBase) {
     const url = new URL(publicBase.toString());
     url.pathname = joinUrlPath(publicBase.pathname, "d/");
     url.search = params.toString();
@@ -559,11 +488,9 @@ async function getDesktopUrl() {
 
 async function getWsUrl() {
   const token = serverState.session.token;
-  const plan = getCurrentPlan();
-  const isTrial = plan === "basic" || plan === "trial";
 
   const publicBase = getResolvedPublicBaseUrl();
-  if (publicBase && !isTrial) {
+  if (publicBase) {
     const url = new URL(publicBase.toString());
     url.protocol = publicBase.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = joinUrlPath(publicBase.pathname, "ws");
@@ -1112,40 +1039,7 @@ async function getEmailFromAuthHeader(req) {
   }
 }
 
-async function generateDesktopLinkCode() {
-  const base = getAccountBaseUrl();
-  const url = new URL(base.toString());
-  url.pathname = joinUrlPath(base.pathname, "api/desktop/generate-code");
-  url.search = "";
-  url.hash = "";
-  const data = await fetchJson(url.toString(), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
-  });
-  if (!data || !data.ok || !data.code) return null;
-  return String(data.code);
-}
 
-async function resolveDesktopLinkCode(codeRaw) {
-  const code = typeof codeRaw === "string" ? codeRaw.trim() : "";
-  if (!code) return null;
-  const base = getAccountBaseUrl();
-  const url = new URL(base.toString());
-  url.pathname = joinUrlPath(base.pathname, "api/desktop/check-code");
-  url.search = "";
-  url.hash = "";
-  const data = await fetchJson(url.toString(), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code }),
-  });
-  if (!data || !data.ok || !data.linked || !data.email) return null;
-  return {
-    email: data.email,
-    plan: typeof data.plan === "string" && data.plan ? data.plan : "basic",
-  };
-}
 
 async function startLocalBridgeServer() {
   const appServer = express();
@@ -1161,20 +1055,7 @@ async function startLocalBridgeServer() {
   });
   appServer.use(express.json());
 
-  appServer.use((req, res, next) => {
-    const plan = getCurrentPlan();
-    if (plan !== "basic" && plan !== "trial") return next();
 
-    const publicBase = getResolvedPublicBaseUrl();
-    if (!publicBase) return next();
-
-    const hostHeader = req.headers.host;
-    if (hostHeader && hostHeader.toLowerCase() === publicBase.host.toLowerCase()) {
-      res.status(403).send("Plan restriction: Basic/Trial plan supports LAN only.");
-      return;
-    }
-    next();
-  });
   const publicDir = path.join(__dirname, "..", "public");
 
   appServer.get("/m/", (req, res) => {
@@ -1229,15 +1110,6 @@ async function startLocalBridgeServer() {
        return;
     }
 
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-    if (supabase) {
-      try {
-        await supabase
-          .from("users")
-          .update({ link_code: token, link_code_expires_at: expiresAt })
-          .eq("email", email);
-      } catch {}
-    }
 
     const stored = {
       email: profile.email,
@@ -1271,15 +1143,7 @@ async function startLocalBridgeServer() {
     const publicBase = getResolvedPublicBaseUrl();
     const hostHeader = req.headers.host;
     console.log(`[WS] Connection attempt - Plan: ${plan}, Host: ${hostHeader}, PublicBase: ${publicBase ? publicBase.host : 'none'}`);
-    if (plan === "basic" || plan === "trial") {
-      if (publicBase) {
-        if (hostHeader && hostHeader.toLowerCase() === publicBase.host.toLowerCase()) {
-          console.log(`[WS] Rejecting connection: LAN-only restriction for ${plan} plan`);
-          closeSocket(ws, 4003, "plan-restriction-lan-only");
-          return;
-        }
-      }
-    }
+
 
     ensureSessionFresh();
 
@@ -1527,11 +1391,7 @@ ipcMain.handle("get-screen-size", async () => {
   return getScreenSize();
 });
 
-ipcMain.handle("generate-link-code", async () => {
-  const code = await generateDesktopLinkCode();
-  if (!code) throw new Error("link-code-failed");
-  return { code };
-});
+
 
 ipcMain.handle("get-user-status", async () => {
   const acc = loadStoredAccount();
@@ -1687,40 +1547,26 @@ ipcMain.handle("logout", async (e, emailArg) => {
   return result;
 });
 
-ipcMain.handle("check-link-code", async (_evt, code) => {
-  const info = await resolveDesktopLinkCode(code);
-  if (!info) return null;
-  saveStoredAccount({ email: info.email, plan: info.plan });
-  return info;
-});
-
 ipcMain.handle("get-stored-account", async () => {
   const acc = loadStoredAccount();
   if (!acc) return null;
-  // Ensure we return the latest plan from the stored account (which might have been updated by getUserStatus)
-  // If the plan is 'trial' but expired locally, we should probably return 'basic' here too, 
-  // but let's trust loadStoredAccount's raw data and let the renderer handle logic or getUserStatus override.
-  // Actually, let's include plan_expires_at so renderer has full context immediately.
   return { 
     email: acc.email, 
-    plan: acc.plan, 
-    plan_expires_at: acc.plan_expires_at 
+    plan: acc.plan || "basic", 
   };
 });
 
 ipcMain.handle("set-stored-account", async (_evt, payload) => {
   const email = payload && typeof payload.email === "string" ? payload.email : "";
   const plan = payload && typeof payload.plan === "string" ? payload.plan : "";
-  const expiresAt = payload && typeof payload.expiresAt === "string" ? payload.expiresAt : (payload.plan_expires_at || null);
 
   if (!email.trim()) {
     clearStoredAccount();
     return null;
   }
   
-  // Save with the provided plan and expiry
-  saveStoredAccount({ email, plan, plan_expires_at: expiresAt });
-  return { email, plan, plan_expires_at: expiresAt };
+  saveStoredAccount({ email, plan });
+  return { email, plan };
 });
 
 ipcMain.handle("clear-stored-account", async () => {
@@ -1739,10 +1585,13 @@ ipcMain.handle("refresh-plan", async (_evt, emailRaw) => {
   const data = await fetchJson(url.toString());
   if (!data || !data.ok || !data.email) return null;
   const plan = typeof data.plan === "string" && data.plan ? data.plan : "basic";
-  const plan_expires_at = typeof data.plan_expires_at === "string" ? data.plan_expires_at : null;
-  
-  saveStoredAccount({ email: data.email, plan, plan_expires_at });
-  return { email: data.email, plan, plan_expires_at, trial: data.trial };
+  saveStoredAccount({ email: data.email, plan });
+  return { 
+    email: data.email, 
+    plan, 
+    responses_remaining: data.responses_remaining ?? 0, 
+    seconds_remaining: data.seconds_remaining ?? 0 
+  };
 });
 
 ipcMain.on("inject-input", (_evt, payload) => {
