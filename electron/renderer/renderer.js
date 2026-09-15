@@ -155,18 +155,22 @@ function showNoInternetView() {
 
 // Check internet connectivity
 async function checkInternet() {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return false;
+  }
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    const response = await fetch("https://www.google.com/favicon.ico", {
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    await fetch("https://www.google.com/favicon.ico?" + Date.now(), {
       method: "HEAD",
+      mode: "no-cors",
       signal: controller.signal,
       cache: "no-store"
     });
     clearTimeout(timeout);
-    return response.ok;
+    return true;
   } catch {
-    return false;
+    return typeof navigator !== "undefined" ? navigator.onLine : true;
   }
 }
 
@@ -1360,48 +1364,6 @@ regenBtn.addEventListener("click", async () => {
 quitBtn.addEventListener("click", () => {
   window.bridge.quitApp();
 });
-
-if (loginConnectBtn) {
-  loginConnectBtn.addEventListener("click", async () => {
-    if (linkPollTimer) {
-      clearInterval(linkPollTimer);
-      linkPollTimer = null;
-    }
-    if (loginStatusText) loginStatusText.textContent = "Opening browser to connect your account...";
-    try {
-      await window.bridge.openLogin();
-    } catch {
-      if (loginStatusText) loginStatusText.textContent = "Failed to open browser. Please try again.";
-      return;
-    }
-    if (loginStatusText) loginStatusText.textContent = "Waiting for website to connect your account...";
-    linkPollTimer = setInterval(async () => {
-      try {
-        const info = await window.bridge.getLinkedUser();
-        if (info && info.email) {
-          if (loginStatusText) loginStatusText.textContent = "";
-          if (userLabel) {
-            userLabel.textContent = info.plan ? `${info.email} (${info.plan})` : info.email;
-          }
-          currentAccount = { email: info.email, plan: info.plan || "basic" };
-          try {
-            await window.bridge.setStoredAccount(currentAccount);
-          } catch {}
-          showSessionView();
-          clearInterval(linkPollTimer);
-          linkPollTimer = null;
-          if (planCheckTimer) {
-            clearInterval(planCheckTimer);
-            planCheckTimer = null;
-          }
-          planCheckTimer = setInterval(() => {
-            refreshPlanAndEnforce().catch(() => {});
-          }, 90000);
-        }
-      } catch {}
-    }, 3000);
-  });
-}
 
 if (logoutBtn) {
   logoutBtn.addEventListener("click", async () => {
