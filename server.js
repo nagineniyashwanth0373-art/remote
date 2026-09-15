@@ -919,8 +919,9 @@ app.post("/api/analyze-screen", async (req, res) => {
     userRecord = await fetchProfileByEmail(userEmail);
   }
 
-  const customOpenAiKey = req.headers["x-openai-key"] || (req.body && req.body.openaiKey) || null;
-  const isByokPlan = userRecord && userRecord.plan === "pro plus+";
+  const session = (token && typeof token === "string") ? sessions.get(token) : null;
+  const customOpenAiKey = req.headers["x-openai-key"] || (req.body && req.body.openaiKey) || (session && session.openaiKey) || null;
+  const isByokPlan = (userRecord && userRecord.plan === "pro plus+") || (session && session.plan === "pro plus+");
 
   if (userRecord && !isByokPlan && !customOpenAiKey) {
     const remaining = userRecord.responses_remaining ?? 0;
@@ -1238,12 +1239,12 @@ wss.on("connection", (ws, req) => {
         session.email = linkState.email.trim().toLowerCase();
       }
 
-      // Check if user has connection time remaining
+      // Check if user has connection time remaining (exempt pro plus+ lifetime)
       if (session.email && supabase) {
         (async () => {
           try {
-            const { data: u } = await supabase.from("users").select("seconds_remaining").eq("email", session.email).maybeSingle();
-            if (u && (u.seconds_remaining ?? 0) <= 0) {
+            const { data: u } = await supabase.from("users").select("plan, seconds_remaining").eq("email", session.email).maybeSingle();
+            if (u && u.plan !== "pro plus+" && (u.seconds_remaining ?? 0) <= 0) {
               console.log(`[Hello] User ${session.email} has 0 seconds remaining. Closing.`);
               try {
                 ws.send(JSON.stringify({
@@ -1268,6 +1269,9 @@ wss.on("connection", (ws, req) => {
         }
         session.desktopSocket = ws;
         if (msg.plan) session.plan = msg.plan;
+        if (msg.openaiKey && typeof msg.openaiKey === "string") {
+          session.openaiKey = msg.openaiKey.trim();
+        }
         console.log(`[Hello] Desktop socket stored, mobile exists: ${!!session.mobileSocket}, plan: ${session.plan || "default"}`);
         if (isOpen(session.mobileSocket)) {
           try {

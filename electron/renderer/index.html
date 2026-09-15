@@ -304,9 +304,11 @@
           <div class="row" style="margin-top: 8px">
             <div class="small" id="userLabel"></div>
             <div class="row" style="gap: 8px;">
+              <button class="secondary" id="byokSettingsBtn" style="display: none;">⚙️ OpenAI Key</button>
               <button class="secondary" id="logoutBtn">Logout</button>
             </div>
           </div>
+          <div id="byokBanner" style="display: none; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.4); border-radius: 12px; padding: 10px 14px; margin-top: 10px; font-size: 12px; color: #e0e7ff; cursor: pointer;">🔑 <b>Action Required:</b> Set your OpenAI API key for unlimited AI answers. <span style="text-decoration: underline; color: #67e8f9;">Configure Now →</span></div>
           <div id="usageRow" class="status" style="margin-top: 8px;">
             <div class="pill" id="responsesPill">✨ AI: --</div>
             <div class="pill" id="secondsPill">⏱️ Time: --</div>
@@ -345,6 +347,30 @@
           </div>
           <div class="row" id="desktopDisconnectRow" style="margin-top: 12px" hidden>
             <button id="desktopDisconnectBtn" data-cmd="disconnect" class="danger">Disconnect</button>
+          </div>
+        </div>
+        <div class="card" id="byokCard" hidden>
+          <div class="row" style="margin-bottom: 12px;">
+            <span class="pill good" style="font-size: 11px;">👑 Pro Plus+ Lifetime</span>
+            <button class="secondary btnTiny" id="byokBackBtn">← Back</button>
+          </div>
+          <p class="title">OpenAI API Key (BYOK)</p>
+          <p class="sub">As a Pro Plus+ Lifetime member, you enjoy unlimited session time and unlimited AI answers using your own OpenAI API key.</p>
+          
+          <div style="margin-top: 16px; display: flex; flex-direction: column; gap: 10px;">
+            <label style="font-size: 12px; font-weight: 600; color: #cbd5e1;">Your OpenAI API Key:</label>
+            <div style="position: relative; display: flex; align-items: center;">
+              <input type="password" id="byokKeyInput" placeholder="sk-..." autocomplete="off" spellcheck="false" style="width: 100%; box-sizing: border-box; padding: 10px 40px 10px 14px; border-radius: 12px; border: 1px solid var(--pill-border); background: rgba(15, 23, 42, 0.9); color: #fff; font-size: 13px; font-family: monospace; outline: none;" />
+              <button type="button" id="byokToggleVisBtn" style="position: absolute; right: 8px; background: transparent; border: none; color: #94a3b8; cursor: pointer; padding: 4px; font-size: 14px;">👁️</button>
+            </div>
+            <p class="sub" style="font-size: 11px; opacity: 0.75;">Your key is stored securely on this computer and used only for your remote requests.</p>
+            
+            <div class="row" style="gap: 10px; margin-top: 6px;">
+              <button id="byokSaveBtn" style="flex: 1;">Save API Key</button>
+              <button class="danger" id="byokClearBtn" style="width: auto;">Clear</button>
+            </div>
+            
+            <div id="byokStatusMsg" style="min-height: 18px; font-size: 12px; margin-top: 4px;"></div>
           </div>
         </div>
       </div>

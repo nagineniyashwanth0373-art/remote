@@ -22,6 +22,15 @@ const logoutBtn = document.getElementById("logoutBtn");
 const userLabel = document.getElementById("userLabel");
 const startSection = document.getElementById("startSection");
 const startSessionBtn = document.getElementById("startSessionBtn");
+const byokSettingsBtn = document.getElementById("byokSettingsBtn");
+const byokBanner = document.getElementById("byokBanner");
+const byokCard = document.getElementById("byokCard");
+const byokBackBtn = document.getElementById("byokBackBtn");
+const byokKeyInput = document.getElementById("byokKeyInput");
+const byokToggleVisBtn = document.getElementById("byokToggleVisBtn");
+const byokSaveBtn = document.getElementById("byokSaveBtn");
+const byokClearBtn = document.getElementById("byokClearBtn");
+const byokStatusMsg = document.getElementById("byokStatusMsg");
 
 const planWarning = document.getElementById("planWarning");
 const sessionSub = document.getElementById("sessionSub");
@@ -112,6 +121,7 @@ function showLoginView() {
   if (loginCard) loginCard.hidden = false;
   if (sessionCard) sessionCard.hidden = true;
   if (noInternetCard) noInternetCard.hidden = true;
+  if (byokCard) byokCard.hidden = true;
   if (userLabel) userLabel.textContent = "";
   if (loginEmailInput) loginEmailInput.value = "";
   if (loginStatusText) {
@@ -126,6 +136,7 @@ function showSessionView() {
   if (loginCard) loginCard.hidden = true;
   if (sessionCard) sessionCard.hidden = false;
   if (noInternetCard) noInternetCard.hidden = true;
+  if (byokCard) byokCard.hidden = true;
   
   // Reset to initial state
   if (startSection) startSection.hidden = false;
@@ -137,7 +148,6 @@ function showSessionView() {
   controllerType = "mobile";
 
   if (startSessionBtn) startSessionBtn.style.display = "none";
-
 
   // Stop any previous sessions if not connected
   if (!uiConnected) {
@@ -151,6 +161,16 @@ function showNoInternetView() {
   if (loginCard) loginCard.hidden = true;
   if (sessionCard) sessionCard.hidden = true;
   if (noInternetCard) noInternetCard.hidden = false;
+  if (byokCard) byokCard.hidden = true;
+}
+
+async function showByokView() {
+  if (loadingCard) loadingCard.hidden = true;
+  if (loginCard) loginCard.hidden = true;
+  if (sessionCard) sessionCard.hidden = true;
+  if (noInternetCard) noInternetCard.hidden = true;
+  if (byokCard) byokCard.hidden = false;
+  await loadCurrentByokKey();
 }
 
 // Check internet connectivity
@@ -402,11 +422,32 @@ async function refreshPlanAndEnforce() {
   const resp = currentAccount.responses_remaining ?? 0;
   const sec = currentAccount.seconds_remaining ?? 0;
 
+  let hasByokKey = false;
+  if (isLifetime && window.bridge.getOpenAiKey) {
+    try {
+      const k = await window.bridge.getOpenAiKey();
+      hasByokKey = Boolean(k && k.trim());
+    } catch {}
+  }
+
+  if (byokSettingsBtn) {
+    byokSettingsBtn.style.display = isLifetime ? "inline-block" : "none";
+  }
+  if (byokBanner) {
+    byokBanner.style.display = (isLifetime && !hasByokKey) ? "block" : "none";
+  }
+
   if (responsesPill) {
     if (isLifetime) {
-      responsesPill.textContent = "✨ AI: BYOK (Custom Key)";
-      responsesPill.classList.remove("bad");
-      responsesPill.classList.add("good");
+      if (hasByokKey) {
+        responsesPill.textContent = "✨ AI: Unlimited (BYOK)";
+        responsesPill.classList.remove("bad");
+        responsesPill.classList.add("good");
+      } else {
+        responsesPill.textContent = "✨ AI: Key Needed (Click to set)";
+        responsesPill.classList.remove("good");
+        responsesPill.classList.add("bad");
+      }
     } else {
       responsesPill.textContent = `✨ AI: ${resp} left`;
       responsesPill.classList.remove("good", "bad");
@@ -1207,14 +1248,20 @@ function connectSignaling() {
   const url = sessionInfo.wsUrl;
   ws = new WebSocket(url);
 
-  ws.addEventListener("open", () => {
+  ws.addEventListener("open", async () => {
     wsReconnectDelayMs = 500;
     setPill(desktopStatus, true, "Desktop: online");
     setPill(mobileStatus, false, "Controller: offline");
     const plan = (currentAccount && currentAccount.plan) || "basic";
     const email = (currentAccount && currentAccount.email) || "";
+    let openaiKey = "";
+    if (plan === "pro plus+" && window.bridge && window.bridge.getOpenAiKey) {
+      try {
+        openaiKey = await window.bridge.getOpenAiKey();
+      } catch {}
+    }
     try {
-      ws.send(JSON.stringify({ type: "hello", role: "desktop", plan, email }));
+      ws.send(JSON.stringify({ type: "hello", role: "desktop", plan, email, openaiKey }));
       ws.send(JSON.stringify({ type: "peer", target: "mobile", payload: { event: "desktop-online", plan } }));
     } catch {}
   });
@@ -1386,6 +1433,106 @@ if (logoutBtn) {
       await window.bridge.clearStoredAccount();
     } catch {}
     showLoginView();
+  });
+}
+
+// BYOK Key Handlers (Pro Plus+ Lifetime)
+async function loadCurrentByokKey() {
+  if (!window.bridge || !window.bridge.getOpenAiKey) return;
+  try {
+    const key = await window.bridge.getOpenAiKey();
+    if (byokKeyInput) byokKeyInput.value = key || "";
+    if (byokStatusMsg) {
+      if (key) {
+        byokStatusMsg.textContent = "✅ OpenAI API key is configured and active.";
+        byokStatusMsg.style.color = "#4ade80";
+      } else {
+        byokStatusMsg.textContent = "⚠️ No API key set yet. Please paste your key above.";
+        byokStatusMsg.style.color = "#fcd34d";
+      }
+    }
+  } catch {}
+}
+
+if (byokSettingsBtn) {
+  byokSettingsBtn.addEventListener("click", () => {
+    showByokView();
+  });
+}
+
+if (byokBanner) {
+  byokBanner.addEventListener("click", () => {
+    showByokView();
+  });
+}
+
+if (byokBackBtn) {
+  byokBackBtn.addEventListener("click", () => {
+    if (byokCard) byokCard.hidden = true;
+    showSessionView();
+    refreshPlanAndEnforce().catch(() => {});
+  });
+}
+
+if (byokToggleVisBtn && byokKeyInput) {
+  byokToggleVisBtn.addEventListener("click", () => {
+    if (byokKeyInput.type === "password") {
+      byokKeyInput.type = "text";
+      byokToggleVisBtn.textContent = "🙈";
+    } else {
+      byokKeyInput.type = "password";
+      byokToggleVisBtn.textContent = "👁️";
+    }
+  });
+}
+
+if (byokSaveBtn && byokKeyInput) {
+  byokSaveBtn.addEventListener("click", async () => {
+    const key = byokKeyInput.value.trim();
+    if (!key) {
+      if (byokStatusMsg) {
+        byokStatusMsg.textContent = "Please enter an OpenAI API key (sk-...).";
+        byokStatusMsg.style.color = "#f87171";
+      }
+      return;
+    }
+    try {
+      await window.bridge.saveOpenAiKey(key);
+      if (byokStatusMsg) {
+        byokStatusMsg.textContent = "✅ OpenAI API key saved securely!";
+        byokStatusMsg.style.color = "#4ade80";
+      }
+      refreshPlanAndEnforce().catch(() => {});
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const plan = (currentAccount && currentAccount.plan) || "basic";
+        const email = (currentAccount && currentAccount.email) || "";
+        ws.send(JSON.stringify({ type: "hello", role: "desktop", plan, email, openaiKey: key }));
+      }
+    } catch (err) {
+      if (byokStatusMsg) {
+        byokStatusMsg.textContent = "Failed to save: " + err.message;
+        byokStatusMsg.style.color = "#f87171";
+      }
+    }
+  });
+}
+
+if (byokClearBtn && byokKeyInput) {
+  byokClearBtn.addEventListener("click", async () => {
+    byokKeyInput.value = "";
+    try {
+      await window.bridge.saveOpenAiKey("");
+      if (byokStatusMsg) {
+        byokStatusMsg.textContent = "API key cleared.";
+        byokStatusMsg.style.color = "#94a3b8";
+      }
+      refreshPlanAndEnforce().catch(() => {});
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const plan = (currentAccount && currentAccount.plan) || "basic";
+        const email = (currentAccount && currentAccount.email) || "";
+        ws.send(JSON.stringify({ type: "hello", role: "desktop", plan, email, openaiKey: "" }));
+      }
+    } catch {}
   });
 }
 

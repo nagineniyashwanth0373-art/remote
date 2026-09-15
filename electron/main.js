@@ -316,6 +316,46 @@ function clearStoredAccount() {
     const p = getAccountStorePath();
     fs.unlinkSync(p);
   } catch {}
+  clearByokKey();
+}
+
+// BYOK OpenAI API key storage (Pro Plus+ Lifetime only)
+function getByokKeyPath() {
+  const dir = app.getPath("userData");
+  return path.join(dir, "byok-key.json");
+}
+
+function loadByokKey() {
+  try {
+    const p = getByokKeyPath();
+    const raw = fs.readFileSync(p, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.openaiKey === "string" && parsed.openaiKey.trim()) {
+      return parsed.openaiKey.trim();
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+function saveByokKey(key) {
+  try {
+    const p = getByokKeyPath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    if (!key || typeof key !== "string" || !key.trim()) {
+      try { fs.unlinkSync(p); } catch {}
+      return;
+    }
+    fs.writeFileSync(p, JSON.stringify({ openaiKey: key.trim() }), "utf8");
+  } catch {}
+}
+
+function clearByokKey() {
+  try {
+    const p = getByokKeyPath();
+    fs.unlinkSync(p);
+  } catch {}
 }
 
 function getAccountBaseUrl() {
@@ -1568,6 +1608,16 @@ ipcMain.handle("set-stored-account", async (_evt, payload) => {
 ipcMain.handle("clear-stored-account", async () => {
   clearStoredAccount();
   return null;
+});
+
+ipcMain.handle("get-openai-key", async () => {
+  return loadByokKey() || "";
+});
+
+ipcMain.handle("save-openai-key", async (_evt, keyRaw) => {
+  const key = typeof keyRaw === "string" ? keyRaw.trim() : "";
+  saveByokKey(key);
+  return { ok: true, saved: Boolean(key) };
 });
 
 ipcMain.handle("refresh-plan", async (_evt, emailRaw) => {

@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld("bridge", {
   getStoredAccount: () => ipcRenderer.invoke("get-stored-account"),
   setStoredAccount: (account) => ipcRenderer.invoke("set-stored-account", account),
   clearStoredAccount: () => ipcRenderer.invoke("clear-stored-account"),
+  getOpenAiKey: () => ipcRenderer.invoke("get-openai-key"),
+  saveOpenAiKey: (key) => ipcRenderer.invoke("save-openai-key", key),
   logout: (email) => ipcRenderer.invoke("logout", email),
   refreshPlan: (email) => ipcRenderer.invoke("refresh-plan", email),
   getUserStatus: () => ipcRenderer.invoke("get-user-status"),
