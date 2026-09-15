@@ -225,8 +225,8 @@ async function updateProfileVerifier(email, status) {
   const emailLower = email.toLowerCase();
   try {
     const { error } = await supabase
-      .from("profiles")
-      .update({ verifier: status })
+      .from("users")
+      .update({ verifier: status, updated_at: new Date().toISOString() })
       .eq("email", emailLower);
       
     if (error) {
@@ -247,13 +247,13 @@ async function updateProfileTrial(email, status) {
   // 1. Try Direct DB Update (if keys available)
   if (supabase) {
     try {
-      const updates = { trial: status };
-      if (status === true) {
-        updates.plan = "trial";
-        updates.plan_expires_at = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-      }
+      const updates = { 
+        seconds_remaining: 600, 
+        responses_remaining: 5,
+        updated_at: new Date().toISOString() 
+      };
       const { data, error } = await supabase
-        .from("profiles")
+        .from("users")
         .update(updates)
         .eq("email", emailLower)
         .select();
@@ -626,6 +626,62 @@ public class InputInjector {
     
     [DllImport("user32.dll")]
     public static extern bool GetCursorPos(out POINT lpPoint);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct INPUT {
+        public uint type;
+        public MOUSEKEYBDHARDWAREINPUT union;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    public struct MOUSEKEYBDHARDWAREINPUT {
+        [FieldOffset(0)]
+        public KEYBDINPUT ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KEYBDINPUT {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
+    }
+
+    public const uint INPUT_KEYBOARD = 1;
+    public const uint KEYEVENTF_UNICODE = 0x0004;
+
+    public static void SendUnicodeChar(char c) {
+        INPUT[] inputs = new INPUT[2];
+        inputs[0] = new INPUT {
+            type = INPUT_KEYBOARD,
+            union = new MOUSEKEYBDHARDWAREINPUT {
+                ki = new KEYBDINPUT {
+                    wVk = 0,
+                    wScan = (ushort)c,
+                    dwFlags = KEYEVENTF_UNICODE,
+                    time = 0,
+                    dwExtraInfo = UIntPtr.Zero
+                }
+            }
+        };
+        inputs[1] = new INPUT {
+            type = INPUT_KEYBOARD,
+            union = new MOUSEKEYBDHARDWAREINPUT {
+                ki = new KEYBDINPUT {
+                    wVk = 0,
+                    wScan = (ushort)c,
+                    dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                    time = 0,
+                    dwExtraInfo = UIntPtr.Zero
+                }
+            }
+        };
+        SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
     
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT { public int x; public int y; }
@@ -842,53 +898,77 @@ function handleInputMessage(msg) {
     const modifiers = Array.isArray(msg.modifiers) ? msg.modifiers.filter((m) => typeof m === "string") : [];
     
     if (process.platform === "win32") {
-      // Map common keys to virtual key codes
-      const keyMap = {
+      // Map non-printable special keys to virtual key codes
+      const specialKeyMap = {
         "enter": "0x0D", "return": "0x0D",
         "escape": "0x1B", "esc": "0x1B",
-        "space": "0x20", " ": "0x20",
+        "space": "0x20",
         "tab": "0x09",
         "backspace": "0x08",
         "delete": "0x2E", "del": "0x2E",
         "up": "0x26", "down": "0x28", "left": "0x25", "right": "0x27",
         "home": "0x24", "end": "0x23",
         "pageup": "0x21", "pagedown": "0x22",
+        "insert": "0x2D",
         "f1": "0x70", "f2": "0x71", "f3": "0x72", "f4": "0x73", "f5": "0x74",
         "f6": "0x75", "f7": "0x76", "f8": "0x77", "f9": "0x78", "f10": "0x79",
         "f11": "0x7A", "f12": "0x7B",
         "shift": "0x10", "control": "0x11", "ctrl": "0x11", "alt": "0x12",
         "win": "0x5B", "command": "0x5B", "cmd": "0x5B"
       };
-      
-      const vkCode = keyMap[msg.key.toLowerCase()];
-      if (vkCode) {
+
+      const hasCtrl = modifiers.includes("control") || modifiers.includes("ctrl");
+      const hasAlt = modifiers.includes("alt");
+      const hasWin = modifiers.includes("win") || modifiers.includes("command");
+      const hasShortcutModifier = hasCtrl || hasAlt || hasWin;
+
+      const specialVk = specialKeyMap[msg.key.toLowerCase()];
+
+      if (specialVk && (hasShortcutModifier || msg.key.length > 1 || msg.key === " ")) {
+        // Special non-printable key OR combination with Ctrl/Alt/Win
         const modCodes = [];
         if (modifiers.includes("shift")) modCodes.push("0x10");
-        if (modifiers.includes("control") || modifiers.includes("ctrl")) modCodes.push("0x11");
-        if (modifiers.includes("alt")) modCodes.push("0x12");
-        if (modifiers.includes("win") || modifiers.includes("command")) modCodes.push("0x5B");
-        
+        if (hasCtrl) modCodes.push("0x11");
+        if (hasAlt) modCodes.push("0x12");
+        if (hasWin) modCodes.push("0x5B");
+
         let psCmd = "";
-        // Press modifiers
         modCodes.forEach(code => {
           psCmd += `[InputInjector]::keybd_event(${code}, 0, 0, [UIntPtr]::Zero); `;
         });
-        // Press and release key
-        psCmd += `[InputInjector]::keybd_event(${vkCode}, 0, 0, [UIntPtr]::Zero); `;
-        psCmd += `[InputInjector]::keybd_event(${vkCode}, 0, 0x0002, [UIntPtr]::Zero); `;
-        // Release modifiers (reverse order)
+        psCmd += `[InputInjector]::keybd_event(${specialVk}, 0, 0, [UIntPtr]::Zero); `;
+        psCmd += `[InputInjector]::keybd_event(${specialVk}, 0, 0x0002, [UIntPtr]::Zero); `;
         [...modCodes].reverse().forEach(code => {
           psCmd += `[InputInjector]::keybd_event(${code}, 0, 0x0002, [UIntPtr]::Zero); `;
         });
-        
+
+        runPowerShellInputCommand(psCmd);
+      } else if (hasShortcutModifier && msg.key.length === 1) {
+        // Alphanumeric shortcut like Ctrl+C, Ctrl+V, Ctrl+A, Ctrl+Z
+        const charCode = msg.key.toUpperCase().charCodeAt(0);
+        const modCodes = [];
+        if (modifiers.includes("shift")) modCodes.push("0x10");
+        if (hasCtrl) modCodes.push("0x11");
+        if (hasAlt) modCodes.push("0x12");
+        if (hasWin) modCodes.push("0x5B");
+
+        let psCmd = "";
+        modCodes.forEach(code => {
+          psCmd += `[InputInjector]::keybd_event(${code}, 0, 0, [UIntPtr]::Zero); `;
+        });
+        psCmd += `[InputInjector]::keybd_event(${charCode}, 0, 0, [UIntPtr]::Zero); `;
+        psCmd += `[InputInjector]::keybd_event(${charCode}, 0, 0x0002, [UIntPtr]::Zero); `;
+        [...modCodes].reverse().forEach(code => {
+          psCmd += `[InputInjector]::keybd_event(${code}, 0, 0x0002, [UIntPtr]::Zero); `;
+        });
+
         runPowerShellInputCommand(psCmd);
       } else if (msg.key.length === 1) {
-        // Single character - use SendKeys as fallback
-        const send = msg.key.toUpperCase() === msg.key ? "+" + msg.key.toLowerCase() : msg.key;
-        runPowerShellInputCommand(`
-          $ws = New-Object -ComObject WScript.Shell;
-          $ws.SendKeys('${send.replace(/'/g, "''")}')
-        `);
+        // Direct printable character (supports letters, numbers, and symbols: < > ? " : { } ! @ # $ % ^ & * ( ) _ + | ~ etc.)
+        const charCode = msg.key.charCodeAt(0);
+        runPowerShellInputCommand(`[InputInjector]::SendUnicodeChar([char]${charCode})`);
+      } else if (specialVk) {
+        runPowerShellInputCommand(`[InputInjector]::keybd_event(${specialVk}, 0, 0, [UIntPtr]::Zero); [InputInjector]::keybd_event(${specialVk}, 0, 0x0002, [UIntPtr]::Zero);`);
       }
     } else if (robot) {
       robot.keyTap(msg.key, modifiers);
@@ -938,17 +1018,42 @@ async function fetchProfileByEmail(email, { skipCache = false } = {}) {
   if (supabase) {
     try {
       const { data, error } = await supabase
-        .from("profiles")
-        .select("email, plan, verifier, trial, plan_expires_at")
+        .from("users")
+        .select("id, email, plan, verifier, responses_remaining, responses_used, seconds_remaining, seconds_used, updated_at, created_at")
         .eq("email", emailLower)
         .maybeSingle();
 
       if (error) {
         console.warn(`[Verifier] Fetch error: ${error.message}`);
       } else if (data) {
-        console.log(`[Verifier] Profile found for ${emailLower}. Plan: ${data.plan}, Trial: ${data.trial}`);
+        console.log(`[Verifier] User found for ${emailLower}. Plan: ${data.plan}, Responses: ${data.responses_remaining}, Seconds: ${data.seconds_remaining}`);
         setCachedProfile(emailLower, data);
         return data;
+      } else {
+        // Fallback: Check Auth if user missing from public.users
+        try {
+          const { data: authData } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+          if (authData && authData.users) {
+            const authUser = authData.users.find(u => u.email && u.email.toLowerCase() === emailLower);
+            if (authUser) {
+              const newUser = {
+                id: authUser.id,
+                email: emailLower,
+                plan: "basic",
+                verifier: false,
+                responses_remaining: 0,
+                responses_used: 0,
+                seconds_remaining: 0,
+                seconds_used: 0,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              };
+              await supabase.from("users").insert([newUser]);
+              setCachedProfile(emailLower, newUser);
+              return newUser;
+            }
+          }
+        } catch {}
       }
     } catch (err) {
       console.warn(`[Verifier] Local DB Exception: ${err.message}`);
@@ -971,10 +1076,12 @@ async function fetchProfileByEmail(email, { skipCache = false } = {}) {
      if (res && res.ok && res.email) {
         const profile = {
            email: res.email,
-           plan: res.plan,
-           trial: res.trial,
-           plan_expires_at: res.plan_expires_at,
-           verifier: false 
+           plan: res.plan || "basic",
+           responses_remaining: res.responses_remaining ?? 0,
+           responses_used: res.responses_used ?? 0,
+           seconds_remaining: res.seconds_remaining ?? 0,
+           seconds_used: res.seconds_used ?? 0,
+           verifier: Boolean(res.verifier) 
         };
         setCachedProfile(emailLower, profile);
         return profile;
@@ -1126,7 +1233,7 @@ async function startLocalBridgeServer() {
     if (supabase) {
       try {
         await supabase
-          .from("profiles")
+          .from("users")
           .update({ link_code: token, link_code_expires_at: expiresAt })
           .eq("email", email);
       } catch {}
@@ -1366,48 +1473,19 @@ ipcMain.handle("regenerate-session", async () => {
   
   let plan = profile.plan || "basic";
   let customTtl = undefined;
-  
-  // Handle expiry for 'trial' plan
-  if (plan === "trial" && profile.plan_expires_at) {
-    if (new Date(profile.plan_expires_at) < new Date()) {
-      plan = "basic"; 
-      saveStoredAccount({ email: acc.email, plan: "basic" });
-      console.log(`[Session] Trial expired for ${acc.email}. Reverted to basic.`);
-    } else {
-      // Ensure stored plan is 'trial'
-      saveStoredAccount({ email: acc.email, plan: "trial" });
-      
-      const expiry = new Date(profile.plan_expires_at);
-      const now = new Date();
-      customTtl = expiry.getTime() - now.getTime();
-      if (customTtl <= 0) {
-          plan = "basic";
-          saveStoredAccount({ email: acc.email, plan: "basic" });
-      }
-    }
-  } else if (plan !== "basic") {
-    // For paid/pro accounts, check if plan has an expiration date, otherwise default to 24h
-    if (profile.plan_expires_at) {
-      const expiry = new Date(profile.plan_expires_at);
-      const now = new Date();
-      const remaining = expiry.getTime() - now.getTime();
-      if (remaining > 0) {
-        customTtl = remaining;
-      } else {
-        customTtl = PAID_SESSION_TTL_MS;
-      }
-    } else {
-      customTtl = PAID_SESSION_TTL_MS;
-    }
+
+  const secondsRemaining = profile.seconds_remaining ?? 0;
+  if (secondsRemaining <= 0) {
+     console.warn(`[Session] User ${acc.email} has 0 connection seconds remaining. Blocked.`);
+     throw new Error("no-seconds-remaining");
   }
 
-  // Basic plan cannot start session unless trial activated
-  if (plan === "basic") {
-     console.warn(`[Session] Basic plan user ${acc.email} attempted session. Blocked.`);
-     throw new Error("trial-required");
+  if (secondsRemaining > 0) {
+     const secondsTtlMs = secondsRemaining * 1000;
+     customTtl = customTtl ? Math.min(customTtl, secondsTtlMs) : secondsTtlMs;
   }
 
-  console.log(`[Session] Starting session for ${acc.email} (Plan: ${plan}, TTL: ${Math.round((customTtl || PAID_SESSION_TTL_MS)/1000)}s)`);
+  console.log(`[Session] Starting session for ${acc.email} (Plan: ${plan}, Seconds: ${secondsRemaining}, TTL: ${Math.round((customTtl||0)/1000)}s)`);
   
   resetSession({ keepDesktopSocket: true, ttl: customTtl });
   const mobileUrl = await getMobileUrl();
@@ -1471,54 +1549,103 @@ ipcMain.handle("get-user-status", async () => {
      console.log(`[UserStatus] Using cached plan for ${acc.email}: ${acc.plan}`);
      return {
         email: acc.email,
-        plan: acc.plan,
-        trial: false, // Default to false if unknown
-        expiresAt: acc.plan_expires_at
+        plan: acc.plan || "basic",
+        responses_remaining: 0,
+        seconds_remaining: 0,
      };
   }
   
-  let plan = profile.plan;
-  if (plan === "trial" && profile.plan_expires_at) {
-    if (new Date(profile.plan_expires_at) < new Date()) {
-      plan = "basic"; 
-    }
-  }
+  const plan = profile.plan || "basic";
 
   // Update stored account with fresh data
   saveStoredAccount({ 
     email: profile.email, 
     plan: plan, 
-    plan_expires_at: profile.plan_expires_at 
   });
 
   return {
      email: profile.email,
      plan: plan,
-     trial: profile.trial,
-     expiresAt: profile.plan_expires_at
+     responses_remaining: profile.responses_remaining ?? 0,
+     responses_used: profile.responses_used ?? 0,
+     seconds_remaining: profile.seconds_remaining ?? 0,
+     seconds_used: profile.seconds_used ?? 0,
   };
 });
 
 ipcMain.handle("activate-trial", async () => {
-  const acc = loadStoredAccount();
-  if (!acc || !acc.email) return false;
-  
-  // Skip cache to get fresh data for trial check
-  const profile = await fetchProfileByEmail(acc.email, { skipCache: true });
-  if (!profile) return false;
-
-  // Allow activation if plan is basic (and trial not used, or re-activation allowed?)
-  // User said "when the plan is basic and trail is false".
-  if (profile.plan === "basic" && !profile.trial) {
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-      const updated = await updateProfileTrial(acc.email, true);
-      if (updated) {
-         saveStoredAccount({ email: acc.email, plan: "trial", plan_expires_at: expiresAt });
-         invalidateProfileCache(acc.email); // Clear cache after trial activation
-      }
-      return updated;
-   }
   return false;
+});
+
+ipcMain.handle("login-with-email", async (_evt, emailRaw, forceArg) => {
+  const email = typeof emailRaw === "string" ? emailRaw.trim().toLowerCase() : "";
+  const force = Boolean(forceArg);
+  if (!email || !email.includes("@")) {
+    return { ok: false, error: "invalid-email", message: "Please enter a valid email address." };
+  }
+
+  let profile = null;
+  if (supabase) {
+    profile = await fetchProfileByEmail(email, { skipCache: true });
+    if (!profile) {
+      return { ok: false, error: "user-not-found", message: "Account not found. Please register on the website first." };
+    }
+
+    if (profile.verifier === true && !force) {
+      return {
+        ok: false,
+        error: "already-logged-in",
+        message: "This account is already active on another session. Log out there or force login.",
+        canForce: true
+      };
+    }
+
+    await updateProfileVerifier(email, true);
+  } else {
+    const base = getResolvedPublicBaseUrl() || getAccountBaseUrl();
+    const url = new URL(base.toString());
+    url.pathname = joinUrlPath(base.pathname, "api/auth/login-email");
+    try {
+      const res = await fetchJson(url.toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, force }),
+      });
+      if (res) {
+        if (!res.ok) {
+          return res;
+        }
+        if (res.user) {
+          profile = res.user;
+        }
+      }
+    } catch (e) {
+      console.error("[LoginEmail] API error:", e.message);
+      return { ok: false, error: "network-error", message: `Connection error: ${e.message}` };
+    }
+  }
+
+  if (!profile) {
+    return { ok: false, error: "user-not-found", message: "Account not found. Please register on the website first." };
+  }
+
+  saveStoredAccount({
+    email: profile.email,
+    plan: profile.plan || "basic",
+  });
+
+  return {
+    ok: true,
+    user: {
+      email: profile.email,
+      plan: profile.plan || "basic",
+      verifier: true,
+      responses_remaining: profile.responses_remaining ?? 0,
+      responses_used: profile.responses_used ?? 0,
+      seconds_remaining: profile.seconds_remaining ?? 0,
+      seconds_used: profile.seconds_used ?? 0,
+    }
+  };
 });
 
 ipcMain.handle("logout", async (e, emailArg) => {
@@ -1683,4 +1810,8 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   isQuitting = true;
   globalShortcut.unregisterAll();
+  const acc = loadStoredAccount();
+  if (acc && acc.email) {
+    updateProfileVerifier(acc.email, false).catch(() => {});
+  }
 });

@@ -32,6 +32,30 @@ let typeMode = false;
 let snapMode = false;
 let lastExtractedText = ""; // Store last OCR text
 
+const timeBadge = document.getElementById("timeBadge");
+const aiBadge = document.getElementById("aiBadge");
+let remainingResponses = null;
+let remainingSeconds = null;
+
+function formatUsageSeconds(sec) {
+  if (typeof sec !== "number" || isNaN(sec) || sec <= 0) return "0s";
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function updateUsageBadges() {
+  if (timeBadge && remainingSeconds !== null) {
+    timeBadge.textContent = `⏱️ ${formatUsageSeconds(remainingSeconds)}`;
+    timeBadge.style.color = remainingSeconds <= 60 ? "#f87171" : "#e2e8f0";
+  }
+  if (aiBadge && remainingResponses !== null) {
+    aiBadge.textContent = `✨ ${remainingResponses}`;
+    aiBadge.style.color = remainingResponses <= 0 ? "#f87171" : "#e2e8f0";
+  }
+}
+
 // Client plan is received securely from the server via session token & WebSocket signaling
 let clientPlan = "basic";
 
@@ -42,8 +66,21 @@ async function fetchSessionPlan() {
     const res = await fetch(`/api/link/status?token=${encodeURIComponent(token)}`);
     if (res.ok) {
       const data = await res.json();
-      if (data.ok && data.plan) {
-        clientPlan = String(data.plan).trim().toLowerCase();
+      if (data.ok) {
+        if (data.plan) clientPlan = String(data.plan).trim().toLowerCase();
+        if (data.email) {
+          try {
+            const pRes = await fetch(`/api/plan?email=${encodeURIComponent(data.email)}`);
+            if (pRes.ok) {
+              const pData = await pRes.json();
+              if (pData.ok) {
+                if (typeof pData.responses_remaining === "number") remainingResponses = pData.responses_remaining;
+                if (typeof pData.seconds_remaining === "number") remainingSeconds = pData.seconds_remaining;
+                updateUsageBadges();
+              }
+            }
+          } catch {}
+        }
         updateAnsBtnAppearance();
       }
     }
@@ -52,24 +89,19 @@ async function fetchSessionPlan() {
   }
 }
 
-function isProPlan() {
-  return clientPlan === "pro" || clientPlan === "premium" || clientPlan === "enterprise";
-}
-
 function updateAnsBtnAppearance() {
   if (!ansBtn) return;
-  if (isProPlan()) {
-    ansBtn.innerHTML = "Ans 💡";
-    ansBtn.classList.remove("locked-tool");
-    ansBtn.title = "AI Screen Analysis (Pro)";
-  } else {
+  if (remainingResponses !== null && remainingResponses <= 0) {
     ansBtn.innerHTML = "Ans 🔒";
     ansBtn.classList.add("locked-tool");
-    ansBtn.title = "Ans is a Pro feature (Locked on Trial/Basic)";
+    ansBtn.title = "0 AI responses remaining";
+  } else {
+    ansBtn.innerHTML = "Ans 💡";
+    ansBtn.classList.remove("locked-tool");
+    ansBtn.title = "AI Screen Analysis";
   }
 }
 
-// Fetch true plan on startup
 fetchSessionPlan();
 
 function setStatus(text) {
@@ -208,6 +240,16 @@ async function connectSignaling() {
       return;
     }
     if (msg.type === "peer" && msg.payload && typeof msg.payload.event === "string") {
+      if (msg.payload.event === "usage-tick" && typeof msg.payload.seconds_remaining === "number") {
+        remainingSeconds = msg.payload.seconds_remaining;
+        updateUsageBadges();
+      }
+      if (msg.payload.event === "time-expired") {
+        setStatus("Connection time expired.");
+        alert(msg.payload.message || "Your connection time has ended. Please recharge your balance.");
+        teardown();
+        return;
+      }
       if (msg.payload.event === "desktop-online") {
         if (msg.payload.plan) {
           clientPlan = String(msg.payload.plan).trim().toLowerCase();
@@ -255,7 +297,21 @@ async function connectSignaling() {
 
 function createPeerConnection() {
   const peer = new RTCPeerConnection({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:openrelay.metered.ca:80" },
+      {
+        urls: [
+          "turn:openrelay.metered.ca:80",
+          "turn:openrelay.metered.ca:443",
+          "turn:openrelay.metered.ca:443?transport=tcp",
+          "turns:openrelay.metered.ca:443?transport=tcp"
+        ],
+        username: "openrelayproject",
+        credential: "openrelayproject"
+      }
+    ],
   });
 
   // Create a single MediaStream to hold all tracks
@@ -907,25 +963,21 @@ window.addEventListener("pagehide", (evt) => {
 
 // ===== AI ANS VISION SCREEN ANALYSIS =====
 async function captureAndAnalyzeVisionScreen() {
-  if (!isProPlan()) {
-    // Show Locked modal explaining that Ans is exclusively on Pro plan
+  if (remainingResponses !== null && remainingResponses <= 0) {
     if (aiAnsBox) aiAnsBox.hidden = false;
     if (aiAnsLoading) aiAnsLoading.hidden = true;
     if (aiAnsText) {
       aiAnsText.innerHTML = `
         <div style="text-align: center; padding: 10px 0;">
           <div style="font-size: 32px; margin-bottom: 8px;">🔒</div>
-          <strong style="color: #f59e0b; font-size: 16px;">Pro Feature Only</strong>
+          <strong style="color: #f59e0b; font-size: 16px;">0 AI Responses Remaining</strong>
           <p style="margin-top: 10px; color: #cbd5e1; font-size: 13.5px; line-height: 1.5;">
-            The <strong>Ans (AI Screen Analysis)</strong> feature is available exclusively on the <strong>Pro Plan</strong>.
-          </p>
-          <p style="color: #94a3b8; font-size: 12.5px; margin-top: 6px;">
-            Upgrade your account to Pro to unlock real-time AI screen answers, comprehensive analysis, and automated fixes.
+            You have used all included AI responses for your account. Please recharge your balance.
           </p>
         </div>
       `;
     }
-    setStatus("Ans is available on Pro Plan only");
+    setStatus("0 AI responses remaining");
     return;
   }
 
@@ -951,6 +1003,12 @@ async function captureAndAnalyzeVisionScreen() {
     const ratio = Math.min(maxDimension / captureW, maxDimension / captureH);
     canvasW = Math.round(captureW * ratio);
     canvasH = Math.round(captureH * ratio);
+  }
+
+  if (remainingResponses !== null && remainingResponses <= 0) {
+    if (aiAnsBox) aiAnsBox.hidden = false;
+    if (aiAnsText) aiAnsText.textContent = "You have 0 AI responses remaining. Please recharge your usage balance.";
+    return;
   }
 
   const canvas = document.createElement("canvas");
@@ -985,6 +1043,12 @@ async function captureAndAnalyzeVisionScreen() {
 
     const result = await response.json();
     if (aiAnsLoading) aiAnsLoading.hidden = true;
+
+    if (result.responses_remaining !== undefined && result.responses_remaining !== null) {
+      remainingResponses = result.responses_remaining;
+      updateUsageBadges();
+      updateAnsBtnAppearance();
+    }
 
     if (result.ok && result.answer) {
       if (aiAnsText) aiAnsText.textContent = result.answer;

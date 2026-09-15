@@ -47,6 +47,7 @@ html, body {
   font-size: 15px;
   letter-spacing: 0.3px;
   background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+  background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }

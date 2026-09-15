@@ -287,16 +287,13 @@
           <button id="retryInternetBtn" style="margin-top: 16px; width: 100%;">Retry</button>
         </div>
         <div class="card" id="loginCard" hidden>
-          <p class="title">Connect this desktop</p>
-          <p class="sub">Generate a one-time code and enter it on helvia.in after logging in.</p>
-          <div class="row" style="margin-top: 12px">
-            <button id="loginConnectBtn">Generate code</button>
-            <div class="codeWrap">
-              <div id="loginCodeValue" class="codeBox empty">------</div>
-              <button id="loginCodeCopyBtn" class="secondary btnTiny" disabled>Copy</button>
-            </div>
-          </div>
-          <p class="sub" id="loginStatusText" style="margin-top: 12px; font-size: 12px; opacity: 0.8"></p>
+          <p class="title">Log in to Desktop</p>
+          <p class="sub">Enter your registered email address to connect this desktop.</p>
+          <form id="loginEmailForm" style="margin-top: 14px; display: flex; flex-direction: column; gap: 10px;">
+            <input type="email" id="loginEmailInput" placeholder="Enter your email (e.g. name@example.com)" required style="width: 100%; box-sizing: border-box; padding: 10px 14px; border-radius: 999px; border: 1px solid var(--pill-border); background: rgba(15, 23, 42, 0.9); color: #fff; font-size: 13px; outline: none;" />
+            <button type="submit" id="loginEmailBtn" style="width: 100%;">Log In</button>
+          </form>
+          <p class="sub" id="loginStatusText" style="margin-top: 10px; font-size: 12px; min-height: 18px;"></p>
         </div>
         <div class="card" id="sessionCard" hidden>
           <p class="title">Helvia Remote Assistant</p>
@@ -306,6 +303,10 @@
             <div class="row" style="gap: 8px;">
               <button class="secondary" id="logoutBtn">Logout</button>
             </div>
+          </div>
+          <div id="usageRow" class="status" style="margin-top: 8px;">
+            <div class="pill" id="responsesPill">✨ AI: --</div>
+            <div class="pill" id="secondsPill">⏱️ Time: --</div>
           </div>
           <div id="startSection" style="margin-top: 16px; display: flex; flex-direction: column; gap: 8px;">
             <button id="startSessionBtn" style="width: 100%; display: none;">Start Remote Session</button>

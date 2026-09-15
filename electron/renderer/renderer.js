@@ -1,9 +1,11 @@
 const loginCard = document.getElementById("loginCard");
 const sessionCard = document.getElementById("sessionCard");
-const loginConnectBtn = document.getElementById("loginConnectBtn");
+const loginEmailForm = document.getElementById("loginEmailForm");
+const loginEmailInput = document.getElementById("loginEmailInput");
+const loginEmailBtn = document.getElementById("loginEmailBtn");
 const loginStatusText = document.getElementById("loginStatusText");
-const loginCodeValue = document.getElementById("loginCodeValue");
-const loginCodeCopyBtn = document.getElementById("loginCodeCopyBtn");
+const responsesPill = document.getElementById("responsesPill");
+const secondsPill = document.getElementById("secondsPill");
 const qrImg = document.getElementById("qrImg");
 const qrWrap = document.getElementById("qrWrap");
 const mobileUrlEl = document.getElementById("mobileUrl");
@@ -51,7 +53,21 @@ let lastBytesSent = 0;
 let stableTicks = 0;
 let restarting = false;
 let disconnectTimer = null;
-let iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
+let iceServers = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  { urls: "stun:openrelay.metered.ca:80" },
+  {
+    urls: [
+      "turn:openrelay.metered.ca:80",
+      "turn:openrelay.metered.ca:443",
+      "turn:openrelay.metered.ca:443?transport=tcp",
+      "turns:openrelay.metered.ca:443?transport=tcp"
+    ],
+    username: "openrelayproject",
+    credential: "openrelayproject"
+  }
+];
 let dailyCall = null;
 let agoraClient = null;
 let agoraVideoTrack = null;
@@ -81,12 +97,27 @@ function setUiConnected(connected) {
   if (desktopDisconnectRow) desktopDisconnectRow.hidden = !connected;
 }
 
+function formatUsageSeconds(sec) {
+  if (typeof sec !== "number" || isNaN(sec) || sec <= 0) return "0s";
+  const hours = Math.floor(sec / 3600);
+  const minutes = Math.floor((sec % 3600) / 60);
+  const seconds = sec % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 function showLoginView() {
   if (loadingCard) loadingCard.hidden = true;
   if (loginCard) loginCard.hidden = false;
   if (sessionCard) sessionCard.hidden = true;
   if (noInternetCard) noInternetCard.hidden = true;
   if (userLabel) userLabel.textContent = "";
+  if (loginEmailInput) loginEmailInput.value = "";
+  if (loginStatusText) {
+    loginStatusText.textContent = "";
+    loginStatusText.style.color = "#fca5a5";
+  }
   currentAccount = null;
 }
 
@@ -229,70 +260,91 @@ async function performDesktopDisconnect(message) {
   }
 }
 
-async function startCodeLinkFlow() {
-  if (linkPollTimer) {
-    clearInterval(linkPollTimer);
-    linkPollTimer = null;
+if (loginEmailForm) {
+  loginEmailForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    await attemptLogin(false);
+  });
+}
+
+async function attemptLogin(force = false) {
+  if (!loginEmailInput) return;
+  const email = loginEmailInput.value.trim().toLowerCase();
+  if (!email || !email.includes("@")) {
+    if (loginStatusText) {
+      loginStatusText.style.color = "#fca5a5";
+      loginStatusText.textContent = "Please enter a valid email address.";
+    }
+    return;
   }
-  if (loginStatusText) loginStatusText.textContent = "Generating code...";
-  if (loginCodeValue) {
-    loginCodeValue.textContent = "------";
-    loginCodeValue.classList.add("empty");
+  if (loginEmailBtn) {
+    loginEmailBtn.disabled = true;
+    loginEmailBtn.textContent = force ? "Forcing login..." : "Logging in...";
   }
-  if (loginCodeCopyBtn) {
-    loginCodeCopyBtn.disabled = true;
+  if (loginStatusText) {
+    loginStatusText.style.color = "#93c5fd";
+    loginStatusText.textContent = "Verifying account...";
   }
-  let code = "";
   try {
-    const result = await window.bridge.generateLinkCode();
-    if (result && result.code) code = String(result.code);
-  } catch {
-    if (loginStatusText) loginStatusText.textContent = "Failed to generate code. Please try again.";
-    return;
-  }
-  if (!code) {
-    if (loginStatusText) loginStatusText.textContent = "Failed to generate code. Please try again.";
-    return;
-  }
-  if (loginCodeValue) {
-    loginCodeValue.textContent = code;
-    loginCodeValue.classList.remove("empty");
-  }
-  if (loginCodeCopyBtn) {
-    loginCodeCopyBtn.disabled = false;
-  }
-  if (loginStatusText) loginStatusText.textContent = "Enter this code on helvia.in after logging in.";
-  linkPollTimer = setInterval(async () => {
-    try {
-      const info = await window.bridge.checkLinkCode(code);
-      if (info && info.email) {
-        if (loginStatusText) loginStatusText.textContent = "";
-        if (userLabel) {
-          userLabel.textContent = info.plan ? `${info.email} (${info.plan})` : info.email;
-        }
-        currentAccount = { email: info.email, plan: info.plan || "basic" };
-        try {
-          await window.bridge.setStoredAccount(currentAccount);
-        } catch {}
-        showSessionView();
-        clearInterval(linkPollTimer);
-        linkPollTimer = null;
-        if (planCheckTimer) {
-          clearInterval(planCheckTimer);
-          planCheckTimer = null;
-        }
-        planCheckTimer = setInterval(() => {
-          refreshPlanAndEnforce().catch(() => {});
-        }, 90000);
+    const result = await window.bridge.loginWithEmail(email, force);
+    if (result && result.ok && result.user) {
+      const user = result.user;
+      currentAccount = {
+        email: user.email,
+        plan: user.plan || "basic",
+        responses_remaining: user.responses_remaining ?? 0,
+        seconds_remaining: user.seconds_remaining ?? 0,
+      };
+      if (userLabel) {
+        userLabel.textContent = user.plan ? `${user.email} (${user.plan})` : user.email;
       }
-    } catch {}
-  }, 3000);
+      if (loginStatusText) {
+        loginStatusText.textContent = "";
+        loginStatusText.innerHTML = "";
+      }
+      showSessionView();
+      if (planCheckTimer) {
+        clearInterval(planCheckTimer);
+        planCheckTimer = null;
+      }
+      refreshPlanAndEnforce().catch(() => {});
+      planCheckTimer = setInterval(() => {
+        refreshPlanAndEnforce().catch(() => {});
+      }, 30000);
+    } else {
+      if (loginStatusText) {
+        loginStatusText.style.color = "#fca5a5";
+        const msg = (result && result.message) || "Account not found. Please register first.";
+        if (result && result.canForce) {
+          loginStatusText.innerHTML = `
+            <span>${msg}</span><br/>
+            <button type="button" id="forceLoginBtn" style="margin-top: 10px; background: #eab308; color: #000; padding: 6px 14px; font-size: 12px; border-radius: 999px; font-weight: bold; border: none; cursor: pointer;">Force Login to This Device</button>
+          `;
+          const forceBtn = document.getElementById("forceLoginBtn");
+          if (forceBtn) {
+            forceBtn.addEventListener("click", () => attemptLogin(true));
+          }
+        } else {
+          loginStatusText.textContent = msg;
+        }
+      }
+    }
+  } catch (err) {
+    if (loginStatusText) {
+      loginStatusText.style.color = "#fca5a5";
+      loginStatusText.textContent = "Login failed. Please try again.";
+    }
+  } finally {
+    if (loginEmailBtn) {
+      loginEmailBtn.disabled = false;
+      loginEmailBtn.textContent = "Log In";
+    }
+  }
 }
 
 async function refreshPlanAndEnforce() {
   if (!currentAccount || !currentAccount.email) return;
   
-  // Debounce: if already in progress, mark as pending and return
   if (planRefreshInProgress) {
     pendingPlanRefresh = true;
     return;
@@ -313,10 +365,13 @@ async function refreshPlanAndEnforce() {
       email: status.email,
       plan: status.plan || "basic",
       trial: status.trial,
-      expiresAt: status.expiresAt
+      expiresAt: status.expiresAt,
+      responses_remaining: status.responses_remaining ?? 0,
+      responses_used: status.responses_used ?? 0,
+      seconds_remaining: status.seconds_remaining ?? 0,
+      seconds_used: status.seconds_used ?? 0,
     };
   } else {
-    // Fallback to refreshPlan if getUserStatus fails
     try {
       const refreshed = await window.bridge.refreshPlan(currentAccount.email);
       if (refreshed) {
@@ -324,7 +379,9 @@ async function refreshPlanAndEnforce() {
           email: refreshed.email,
           plan: refreshed.plan || "basic",
           trial: refreshed.trial,
-          expiresAt: refreshed.plan_expires_at
+          expiresAt: refreshed.plan_expires_at,
+          responses_remaining: refreshed.responses_remaining ?? 0,
+          seconds_remaining: refreshed.seconds_remaining ?? 0,
         };
       }
     } catch {}
@@ -340,98 +397,40 @@ async function refreshPlanAndEnforce() {
     userLabel.textContent = label;
   }
 
-  const plan = (currentAccount.plan || "").toLowerCase();
-  
-  // Double-check: if plan is 'trial' but expired, treat it as expired trial
-  // BUT: The user specifically said "when logged in email and plan is pro make it to show start session".
-  // The issue is likely that sometimes `plan` is not being updated correctly or falling back to basic/trial.
-  // Let's ensure if it is PRO, it STAYS PRO in UI.
+  // Update usage pills
+  const resp = currentAccount.responses_remaining ?? 0;
+  const sec = currentAccount.seconds_remaining ?? 0;
 
-  let isExpired = false;
-  if (currentAccount.expiresAt) {
-    isExpired = new Date(currentAccount.expiresAt) < new Date();
+  if (responsesPill) {
+    responsesPill.textContent = `✨ AI: ${resp} left`;
+    responsesPill.classList.remove("good", "bad");
+    responsesPill.classList.add(resp > 0 ? "good" : "bad");
+  }
+  if (secondsPill) {
+    secondsPill.textContent = `⏱️ Time: ${formatUsageSeconds(sec)}`;
+    secondsPill.classList.remove("good", "bad");
+    secondsPill.classList.add(sec > 0 ? "good" : "bad");
   }
 
   const sessionActive = started || uiConnected;
 
-  if (plan === "basic" && sessionActive) {
-    window.bridge.quitApp();
-    return;
-  }
-
-  if (plan === "trial" && isExpired && sessionActive) {
-    window.bridge.quitApp();
-    return;
-  }
-
-  if (plan === "pro") {
+  // Enforce usage model: seconds_remaining controls session start
+  if (sec > 0) {
     if (startSessionBtn) startSessionBtn.style.display = "block";
     if (activateTrialBtn) activateTrialBtn.style.display = "none";
     if (planWarning) planWarning.style.display = "none";
-    planRefreshInProgress = false;
-    // If there was a pending refresh, trigger it
-    if (pendingPlanRefresh) {
-      setTimeout(() => refreshPlanAndEnforce().catch(() => {}), 100);
+  } else {
+    if (startSessionBtn) startSessionBtn.style.display = "none";
+    if (planWarning) {
+      planWarning.textContent = "0 connection seconds remaining. Please recharge your balance.";
+      planWarning.style.display = "block";
+      planWarning.style.color = "#f87171";
     }
-    return; // Exit early to prevent any other logic from overriding
+    if (sessionActive) {
+      performDesktopDisconnect("Connection time finished. Please recharge your balance.");
+    }
   }
 
-  // Strict check for Trial (must be 'trial' AND not expired)
-  if (plan === "trial" && !isExpired) {
-    if (startSessionBtn) startSessionBtn.style.display = "block";
-    if (activateTrialBtn) activateTrialBtn.style.display = "none";
-    
-    const mins = Math.ceil((new Date(currentAccount.expiresAt) - Date.now()) / 60000);
-    if (planWarning) {
-      planWarning.textContent = `Trial Active: ${mins}m remaining (LAN Only).`;
-      planWarning.style.display = "block";
-      planWarning.style.color = "#fbbf24";
-    }
-    planRefreshInProgress = false;
-    if (pendingPlanRefresh) {
-      setTimeout(() => refreshPlanAndEnforce().catch(() => {}), 100);
-    }
-    return;
-  }
-  
-  // Default / Fallback to Basic behavior (Strictly Hidden)
-  // This covers: plan="basic", plan="trial" (expired), or any other unknown state
-  if (startSessionBtn) startSessionBtn.style.display = "none";
-  
-  if (plan === "trial" && isExpired) {
-     if (activateTrialBtn) {
-        activateTrialBtn.style.display = "block";
-        activateTrialBtn.textContent = "Trial Expired";
-        activateTrialBtn.disabled = true;
-        activateTrialBtn.style.background = "#ef4444";
-     }
-     if (planWarning) {
-        planWarning.textContent = "Trial Expired. Please upgrade to Pro.";
-        planWarning.style.display = "block";
-        planWarning.style.color = "#fca5a5";
-     }
-  } else {
-     // Basic
-     if (currentAccount.trial === true) {
-        if (activateTrialBtn) {
-           activateTrialBtn.style.display = "block";
-           activateTrialBtn.textContent = "Trial Already Used";
-           activateTrialBtn.disabled = true;
-           activateTrialBtn.style.background = "#6b7280";
-        }
-     } else {
-        if (activateTrialBtn) {
-           activateTrialBtn.style.display = "block";
-           activateTrialBtn.textContent = "Activate 10m Trial";
-           activateTrialBtn.disabled = false;
-           activateTrialBtn.style.background = "#eab308";
-        }
-     }
-     if (planWarning) {
-        planWarning.style.display = "none";
-     }
-  }
-  
   planRefreshInProgress = false;
   if (pendingPlanRefresh) {
     setTimeout(() => refreshPlanAndEnforce().catch(() => {}), 100);
@@ -465,28 +464,17 @@ if (activateTrialBtn) {
 
 async function handleStartSession() {
   if (!currentAccount) return;
-  const plan = (currentAccount.plan || "").toLowerCase();
+  const sec = currentAccount.seconds_remaining ?? 0;
   
-  // Strict Enforcement: Block Basic Plan
-  // Only allow if plan is 'trial' or 'pro'
-  if (plan !== "trial" && plan !== "pro") {
-    // Should be hidden by UI, but double safety
+  if (sec <= 0) {
     if (startSessionBtn) startSessionBtn.style.display = "none";
-    alert("Please activate a trial or upgrade to Pro to start a session.");
+    alert("0 connection seconds remaining. Please recharge your balance to start a session.");
     return;
   }
   
-  // Show plan-specific warning
-  if (plan === "pro") {
-    if (planWarning) planWarning.style.display = "none";
-  } else if (plan === "trial") {
-    if (planWarning) {
-        planWarning.textContent = "Trial Active: Session limited to 10 minutes (LAN only).";
-        planWarning.style.display = "block";
-    }
-  }
+  if (planWarning) planWarning.style.display = "none";
     
-  // Show choice dialog for all valid plans (Pro and Trial)
+  // Show choice dialog for all valid sessions
   if (clientChoiceBackdrop) {
       clientChoiceBackdrop.hidden = false;
       return;
@@ -559,21 +547,6 @@ if (chooseDesktopBtn) {
 if (choiceCancelBtn) {
   choiceCancelBtn.addEventListener("click", () => {
     if (clientChoiceBackdrop) clientChoiceBackdrop.hidden = true;
-  });
-}
-
-if (loginConnectBtn) {
-  loginConnectBtn.addEventListener("click", () => {
-    startCodeLinkFlow();
-  });
-}
-
-if (loginCodeCopyBtn) {
-  loginCodeCopyBtn.addEventListener("click", () => {
-    if (!loginCodeValue) return;
-    const text = (loginCodeValue.textContent || "").trim();
-    if (!text || text === "------") return;
-    window.bridge.copyText(text);
   });
 }
 
@@ -853,7 +826,33 @@ async function refreshCaptureStream() {
 }
 
 async function loadIceServers() {
-  iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
+  const fallback = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:openrelay.metered.ca:80" },
+    {
+      urls: [
+        "turn:openrelay.metered.ca:80",
+        "turn:openrelay.metered.ca:443",
+        "turn:openrelay.metered.ca:443?transport=tcp",
+        "turns:openrelay.metered.ca:443?transport=tcp"
+      ],
+      username: "openrelayproject",
+      credential: "openrelayproject"
+    }
+  ];
+
+  try {
+    const res = await fetch("https://remo.helvia.in/api/ice-servers");
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+        iceServers = data.iceServers;
+        return;
+      }
+    }
+  } catch (err) {}
+  iceServers = fallback;
 }
 
 async function renegotiate(iceRestart) {
@@ -1223,8 +1222,9 @@ function connectSignaling() {
     setPill(desktopStatus, true, "Desktop: online");
     setPill(mobileStatus, false, "Controller: offline");
     const plan = (currentAccount && currentAccount.plan) || "basic";
+    const email = (currentAccount && currentAccount.email) || "";
     try {
-      ws.send(JSON.stringify({ type: "hello", role: "desktop", plan }));
+      ws.send(JSON.stringify({ type: "hello", role: "desktop", plan, email }));
       ws.send(JSON.stringify({ type: "peer", target: "mobile", payload: { event: "desktop-online", plan } }));
     } catch {}
   });
@@ -1252,6 +1252,20 @@ function connectSignaling() {
     if (msg.type === "peer" && msg.payload && typeof msg.payload.event === "string") {
       const ev = msg.payload.event;
       console.log("[Desktop] Peer event:", ev);
+      if (ev === "usage-tick" && typeof msg.payload.seconds_remaining === "number") {
+        if (secondsPill) {
+          secondsPill.textContent = `⏱️ Time: ${formatUsageSeconds(msg.payload.seconds_remaining)}`;
+          secondsPill.classList.remove("good", "bad");
+          secondsPill.classList.add(msg.payload.seconds_remaining > 0 ? "good" : "bad");
+        }
+        if (currentAccount) {
+          currentAccount.seconds_remaining = msg.payload.seconds_remaining;
+        }
+      }
+      if (ev === "time-expired") {
+        performDesktopDisconnect(msg.payload.message || "Connection time finished. Please recharge your balance.");
+        return;
+      }
       if (ev === "mobile-online") {
         setPill(mobileStatus, true, "Controller: online");
         console.log("[Desktop] Mobile online, started=", started);
@@ -1289,6 +1303,10 @@ function connectSignaling() {
     setPill(mobileStatus, false, "Controller: offline");
     ws = null;
 
+    if (evt.code === 4402) {
+       performDesktopDisconnect("Connection time finished. Please recharge your balance.");
+       return;
+    }
     if (evt.code === 4001) {
        performDesktopDisconnect("Session Expired (10 min limit). Start a new session to continue.");
        return;

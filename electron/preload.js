@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld("bridge", {
     }
     return ipcRenderer.invoke("get-desktop-source-id");
   },
+  loginWithEmail: (email, force) => ipcRenderer.invoke("login-with-email", email, force),
   generateLinkCode: () => ipcRenderer.invoke("generate-link-code"),
   checkLinkCode: (code) => ipcRenderer.invoke("check-link-code", code),
   getStoredAccount: () => ipcRenderer.invoke("get-stored-account"),

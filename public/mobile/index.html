@@ -11,7 +11,13 @@
   </head>
   <body>
     <div id="topbar">
-      <div id="status">Connecting…</div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div id="status">Connecting…</div>
+        <div id="usageBadge" style="font-size: 11px; padding: 2px 8px; border-radius: 999px; background: rgba(15,23,42,0.8); border: 1px solid rgba(148,163,184,0.3); display: inline-flex; gap: 6px; align-items: center;">
+          <span id="timeBadge">⏱️ --</span>
+          <span id="aiBadge">✨ --</span>
+        </div>
+      </div>
       <div style="display: flex; gap: 8px">
         <button id="lockToggle" class="top-btn" title="Lock Screen & Connection (Fix Mode)">🔓</button>
         <button id="micToggle" class="top-btn" title="Toggle Microphone">🎤</button>

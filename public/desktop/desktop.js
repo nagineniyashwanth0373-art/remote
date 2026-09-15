@@ -20,26 +20,45 @@ const aiAnsRefresh = document.getElementById("aiAnsRefresh");
 let micEnabled = false;
 let cameraEnabled = false;
 let clientPlan = "basic";
+const timeBadge = document.getElementById("timeBadge");
+const aiBadge = document.getElementById("aiBadge");
+let remainingResponses = null;
+let remainingSeconds = null;
+
+function formatUsageSeconds(sec) {
+  if (typeof sec !== "number" || isNaN(sec) || sec <= 0) return "0s";
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function updateUsageBadges() {
+  if (timeBadge && remainingSeconds !== null) {
+    timeBadge.textContent = `⏱️ ${formatUsageSeconds(remainingSeconds)}`;
+    timeBadge.style.color = remainingSeconds <= 60 ? "#f87171" : "#e2e8f0";
+  }
+  if (aiBadge && remainingResponses !== null) {
+    aiBadge.textContent = `✨ ${remainingResponses}`;
+    aiBadge.style.color = remainingResponses <= 0 ? "#f87171" : "#e2e8f0";
+  }
+}
 
 function getToken() {
   const url = new URL(location.href);
   return url.searchParams.get("t") || "";
 }
 
-function isProPlan() {
-  return clientPlan === "pro" || clientPlan === "premium" || clientPlan === "enterprise";
-}
-
 function updateAnsBtnAppearance() {
   if (!ansBtn) return;
-  if (isProPlan()) {
-    ansBtn.innerHTML = '<span class="ai-icon">✨</span><span class="ai-label">Ans</span>';
-    ansBtn.classList.remove("locked-tool");
-    ansBtn.title = "AI Screen Analysis (Pro)";
-  } else {
+  if (remainingResponses !== null && remainingResponses <= 0) {
     ansBtn.innerHTML = '<span class="ai-icon">🔒</span><span class="ai-label">Ans</span>';
     ansBtn.classList.add("locked-tool");
-    ansBtn.title = "Ans is a Pro feature (Locked on Trial/Basic)";
+    ansBtn.title = "0 AI responses remaining";
+  } else {
+    ansBtn.innerHTML = '<span class="ai-icon">✨</span><span class="ai-label">Ans</span>';
+    ansBtn.classList.remove("locked-tool");
+    ansBtn.title = "AI Screen Analysis";
   }
 }
 
@@ -50,8 +69,21 @@ async function fetchSessionPlan() {
     const res = await fetch(`/api/link/status?token=${encodeURIComponent(token)}`);
     if (res.ok) {
       const data = await res.json();
-      if (data.ok && data.plan) {
-        clientPlan = String(data.plan).trim().toLowerCase();
+      if (data.ok) {
+        if (data.plan) clientPlan = String(data.plan).trim().toLowerCase();
+        if (data.email) {
+          try {
+            const pRes = await fetch(`/api/plan?email=${encodeURIComponent(data.email)}`);
+            if (pRes.ok) {
+              const pData = await pRes.json();
+              if (pData.ok) {
+                if (typeof pData.responses_remaining === "number") remainingResponses = pData.responses_remaining;
+                if (typeof pData.seconds_remaining === "number") remainingSeconds = pData.seconds_remaining;
+                updateUsageBadges();
+              }
+            }
+          } catch {}
+        }
         updateAnsBtnAppearance();
       }
     }
@@ -164,6 +196,16 @@ function initSignaling() {
     }
 
     if (msg.type === "peer" && msg.payload && typeof msg.payload.event === "string") {
+      if (msg.payload.event === "usage-tick" && typeof msg.payload.seconds_remaining === "number") {
+        remainingSeconds = msg.payload.seconds_remaining;
+        updateUsageBadges();
+      }
+      if (msg.payload.event === "time-expired") {
+        setStatus("Connection time expired.");
+        alert(msg.payload.message || "Your connection time has ended. Please recharge your balance.");
+        teardown();
+        return;
+      }
       if (msg.payload.event === "desktop-online") {
         if (msg.payload.plan) {
           clientPlan = String(msg.payload.plan).trim().toLowerCase();
@@ -190,7 +232,21 @@ function initSignaling() {
 
 function createPeerConnection() {
   const peer = new RTCPeerConnection({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:openrelay.metered.ca:80" },
+      {
+        urls: [
+          "turn:openrelay.metered.ca:80",
+          "turn:openrelay.metered.ca:443",
+          "turn:openrelay.metered.ca:443?transport=tcp",
+          "turns:openrelay.metered.ca:443?transport=tcp"
+        ],
+        username: "openrelayproject",
+        credential: "openrelayproject"
+      }
+    ],
   });
 
   let remoteStream = null;
@@ -401,16 +457,21 @@ touchLayer.addEventListener("contextmenu", (evt) => {
   evt.preventDefault();
 });
 
-// 6. Direct Hardware Keyboard Capture (All Keys, Ctrl, Alt, Shift, Arrows, Shortcuts)
+// 6. Direct Hardware Keyboard Capture (All Keys, Numbers, Shifted Symbols, Shortcuts)
 window.addEventListener("keydown", (evt) => {
   // If typing in AI modal or input box, allow normal typing
   if (evt.target && (evt.target.tagName === "INPUT" || evt.target.tagName === "TEXTAREA")) {
     return;
   }
 
-  // Prevent browser default actions for standard shortcuts (e.g. Ctrl+S, Tab, F5)
+  // Prevent browser default actions for standard shortcuts (e.g. Ctrl+S, Tab, F5, Alt)
   if (evt.key === "Tab" || evt.key === "Alt" || (evt.ctrlKey && evt.key.toLowerCase() === "s")) {
     evt.preventDefault();
+  }
+
+  // If user just pressed Shift, Control, Alt, or Meta alone, don't send an empty keystroke
+  if (["Shift", "Control", "Alt", "Meta"].includes(evt.key)) {
+    return;
   }
 
   const modifiers = [];
@@ -486,21 +547,10 @@ if (fsToggle) {
 
 // ===== AI ANS SCREEN ANALYSIS (VISION) =====
 async function captureAndAnalyzeVisionScreen() {
-  if (!isProPlan()) {
-    if (aiAnsBox) {
-      aiAnsBox.hidden = false;
-      if (aiAnsText) {
-        aiAnsText.innerHTML = `
-          <div style="text-align: center; padding: 10px 0;">
-            <div style="font-size: 38px; margin-bottom: 10px;">🔒</div>
-            <h3 style="margin: 0 0 8px 0; color: #f59e0b;">Pro Feature Locked</h3>
-            <p style="color: #94a3b8; font-size: 14px; margin: 0 0 16px 0;">
-              AI Screen Analysis is available exclusively on <strong>Pro Plans</strong>.
-            </p>
-          </div>
-        `;
-      }
-    }
+
+  if (remainingResponses !== null && remainingResponses <= 0) {
+    if (aiAnsBox) aiAnsBox.hidden = false;
+    if (aiAnsText) aiAnsText.textContent = "You have 0 AI responses remaining. Please recharge your usage balance.";
     return;
   }
 
@@ -530,8 +580,24 @@ async function captureAndAnalyzeVisionScreen() {
       body: JSON.stringify({ image: imageData, token: token })
     });
 
+    if (!response.ok) {
+      const errorText = await response.text();
+      let parsedError = errorText;
+      try {
+        const jsonErr = JSON.parse(errorText);
+        parsedError = jsonErr.message || jsonErr.error || errorText;
+      } catch {}
+      throw new Error(parsedError);
+    }
+
     const result = await response.json();
     if (aiAnsLoading) aiAnsLoading.hidden = true;
+
+    if (result.responses_remaining !== undefined && result.responses_remaining !== null) {
+      remainingResponses = result.responses_remaining;
+      updateUsageBadges();
+      updateAnsBtnAppearance();
+    }
 
     if (result.ok && result.answer) {
       if (aiAnsText) aiAnsText.textContent = result.answer;

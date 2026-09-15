@@ -70,8 +70,8 @@ async function fetchProfileByEmail(email) {
   
   try {
     const { data, error } = await supabase
-      .from("profiles")
-      .select("email, plan, verifier, trial, plan_expires_at")
+      .from("users")
+      .select("id, email, plan, verifier, responses_remaining, responses_used, seconds_remaining, seconds_used, updated_at, created_at")
       .eq("email", emailLower)
       .maybeSingle();
 
@@ -82,8 +82,8 @@ async function fetchProfileByEmail(email) {
 
     if (data) return data;
 
-    // Fallback: If profile missing but user exists in Auth, create it.
-    console.log(`[Verifier] Profile missing for ${emailLower}, checking Auth...`);
+    // Fallback: If user missing but exists in Auth, create user record in public.users
+    console.log(`[Verifier] User missing for ${emailLower}, checking Auth...`);
     const { data: authData, error: authError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
     
     if (authError || !authData || !authData.users) {
@@ -98,25 +98,39 @@ async function fetchProfileByEmail(email) {
       return null;
     }
 
-    console.log(`[Verifier] Found user in Auth (ID: ${user.id}), creating profile...`);
-    const newProfile = {
+    console.log(`[Verifier] Found user in Auth (ID: ${user.id}), creating user record...`);
+    const newUser = {
       id: user.id,
       email: emailLower,
       plan: "basic",
       verifier: false,
+      responses_remaining: 0,
+      responses_used: 0,
+      seconds_remaining: 0,
+      seconds_used: 0,
+      created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
     const { error: insertError } = await supabase
-      .from("profiles")
-      .insert([newProfile]);
+      .from("users")
+      .insert([newUser]);
 
     if (insertError) {
-      console.error(`[Verifier] Profile creation failed: ${insertError.message}`);
+      console.error(`[Verifier] User creation failed: ${insertError.message}`);
       return null;
     }
 
-    return { email: emailLower, plan: "basic", verifier: false };
+    return {
+      id: user.id,
+      email: emailLower,
+      plan: "basic",
+      verifier: false,
+      responses_remaining: 0,
+      responses_used: 0,
+      seconds_remaining: 0,
+      seconds_used: 0
+    };
   } catch (err) {
     console.error(`[Verifier] Exception in fetch: ${err.message}`);
     return null;
@@ -128,8 +142,8 @@ async function updateProfileVerifier(email, status) {
   const emailLower = email.toLowerCase();
   try {
     const { error } = await supabase
-      .from("profiles")
-      .update({ verifier: status })
+      .from("users")
+      .update({ verifier: status, updated_at: new Date().toISOString() })
       .eq("email", emailLower);
       
     if (error) {
@@ -159,51 +173,103 @@ function getSession(token) {
   return session;
 }
 
+const TICK_INTERVAL_MS = 5000;
 setInterval(async () => {
   const now = Date.now();
   for (const [token, session] of sessions.entries()) {
     const desktopConnected = isOpen(session.desktopSocket);
     const mobileConnected = isOpen(session.mobileSocket);
 
-    // Security 4: Mid-session plan expiration check
-    // If a 1-day pass or 10-minute trial has expired, notify sockets and terminate session
-    if (session.plan && session.plan !== "basic" && supabase) {
-      const linkState = linkStates.get(token);
-      if (linkState && linkState.email) {
+    // Meter active connection time when desktop and mobile are actively connected
+    if (desktopConnected && mobileConnected && supabase) {
+      const email = session.email || (linkStates.get(token) && linkStates.get(token).email);
+      if (email) {
         try {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("plan, plan_expires_at")
-            .eq("email", linkState.email.toLowerCase())
+          const { data: user, error } = await supabase
+            .from("users")
+            .select("seconds_remaining, seconds_used")
+            .eq("email", email.toLowerCase())
             .maybeSingle();
 
-          if (profile && profile.plan_expires_at) {
-            const expiryTime = new Date(profile.plan_expires_at).getTime();
-            if (now > expiryTime) {
-              console.log(`[Session] Plan expired for ${linkState.email} (token: ${token.substring(0, 8)}...). Terminating connection.`);
-              session.plan = "basic";
-              linkState.plan = "basic";
-              try {
-                if (isOpen(session.mobileSocket)) {
-                  session.mobileSocket.send(JSON.stringify({
-                    type: "peer",
-                    payload: { event: "plan-expired", message: "Your plan duration has expired." }
-                  }));
-                  session.mobileSocket.close(4403, "plan-expired");
-                }
-                if (isOpen(session.desktopSocket)) {
-                  session.desktopSocket.close(4403, "plan-expired");
-                }
-              } catch {}
+          if (!error && user) {
+            const currentSeconds = user.seconds_remaining ?? 0;
+            if (currentSeconds <= 0) {
+              console.log(`[Usage] Connection time exhausted for ${email}. Terminating.`);
+              const expiredMsg = JSON.stringify({
+                type: "peer",
+                payload: { event: "time-expired", message: "Connection time finished. Please recharge your balance." }
+              });
+              if (isOpen(session.mobileSocket)) {
+                try {
+                  session.mobileSocket.send(expiredMsg);
+                  session.mobileSocket.close(4402, "time-expired");
+                } catch {}
+              }
+              if (isOpen(session.desktopSocket)) {
+                try {
+                  session.desktopSocket.send(expiredMsg);
+                  session.desktopSocket.close(4402, "time-expired");
+                } catch {}
+              }
+              sessions.delete(token);
+              continue;
+            }
+
+            // Deduct 5 seconds
+            const elapsed = Math.round(TICK_INTERVAL_MS / 1000);
+            const newRemaining = Math.max(0, currentSeconds - elapsed);
+            const newUsed = (user.seconds_used ?? 0) + elapsed;
+
+            await supabase
+              .from("users")
+              .update({
+                seconds_remaining: newRemaining,
+                seconds_used: newUsed,
+                updated_at: new Date().toISOString()
+              })
+              .eq("email", email.toLowerCase());
+
+            // Broadcast tick update to sockets
+            const tickMsg = JSON.stringify({
+              type: "peer",
+              payload: { event: "usage-tick", seconds_remaining: newRemaining }
+            });
+            if (isOpen(session.desktopSocket)) {
+              try { session.desktopSocket.send(tickMsg); } catch {}
+            }
+            if (isOpen(session.mobileSocket)) {
+              try { session.mobileSocket.send(tickMsg); } catch {}
+            }
+
+            if (newRemaining <= 0) {
+              console.log(`[Usage] Connection time reached 0 for ${email}. Terminating.`);
+              const expiredMsg = JSON.stringify({
+                type: "peer",
+                payload: { event: "time-expired", message: "Connection time finished. Please recharge your balance." }
+              });
+              if (isOpen(session.mobileSocket)) {
+                try {
+                  session.mobileSocket.send(expiredMsg);
+                  session.mobileSocket.close(4402, "time-expired");
+                } catch {}
+              }
+              if (isOpen(session.desktopSocket)) {
+                try {
+                  session.desktopSocket.send(expiredMsg);
+                  session.desktopSocket.close(4402, "time-expired");
+                } catch {}
+              }
               sessions.delete(token);
               continue;
             }
           }
         } catch (err) {
-          console.error("[Session] Error checking mid-session plan expiry:", err.message);
+          console.error("[Usage] Connection time tick error:", err.message);
         }
       }
     }
+
+
 
     if (session.expiresAt > now) continue;
     
@@ -217,7 +283,7 @@ setInterval(async () => {
     sessions.delete(token);
     console.log(`[Session] Deleted expired session for token ${token.substring(0, 8)}...`);
   }
-}, 60 * 1000).unref();
+}, TICK_INTERVAL_MS).unref();
 
 // Disposable email domains blocklist to prevent infinite free trial abuse
 const DISPOSABLE_EMAIL_DOMAINS = new Set([
@@ -302,6 +368,91 @@ app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/ice-servers", (req, res) => {
+  res.json({
+    ok: true,
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:openrelay.metered.ca:80" },
+      {
+        urls: [
+          "turn:openrelay.metered.ca:80",
+          "turn:openrelay.metered.ca:443",
+          "turn:openrelay.metered.ca:443?transport=tcp",
+          "turns:openrelay.metered.ca:443?transport=tcp"
+        ],
+        username: "openrelayproject",
+        credential: "openrelayproject"
+      }
+    ]
+  });
+});
+
+// Direct Email Login Endpoint
+app.post("/api/auth/login-email", async (req, res) => {
+  const body = req.body || {};
+  const emailRaw = typeof body.email === "string" ? body.email : "";
+  const force = Boolean(body.force);
+  const email = emailRaw.trim().toLowerCase();
+
+  if (!email || !email.includes("@")) {
+    return res.status(400).json({ ok: false, error: "invalid-email", message: "Please provide a valid email address." });
+  }
+
+  const user = await fetchProfileByEmail(email);
+  if (!user) {
+    return res.status(404).json({
+      ok: false,
+      error: "user-not-found",
+      message: "No account found for this email. Please register on the website first."
+    });
+  }
+
+  // If verifier is already true, block concurrent login unless forced
+  if (user.verifier === true && !force) {
+    return res.status(409).json({
+      ok: false,
+      error: "already-logged-in",
+      message: "Account is already active on another session. Log out from the other device or force login.",
+      canForce: true
+    });
+  }
+
+  // If verifier is false (or force login requested): set verifier = true and log in
+  await updateProfileVerifier(email, true);
+
+  return res.json({
+    ok: true,
+    user: {
+      id: user.id,
+      email: user.email,
+      plan: user.plan || "basic",
+      verifier: true,
+      responses_remaining: user.responses_remaining ?? 0,
+      responses_used: user.responses_used ?? 0,
+      seconds_remaining: user.seconds_remaining ?? 0,
+      seconds_used: user.seconds_used ?? 0,
+    }
+  });
+});
+
+// Logout endpoint
+app.post("/api/auth/logout", async (req, res) => {
+  const body = req.body || {};
+  const emailRaw = typeof body.email === "string" ? body.email : "";
+  const email = emailRaw.trim().toLowerCase();
+  if (email) {
+    await updateProfileVerifier(email, false);
+    for (const [t, data] of linkStates.entries()) {
+      if (data.email && data.email.toLowerCase() === email) {
+        linkStates.delete(t);
+      }
+    }
+  }
+  res.json({ ok: true });
+});
+
 app.post("/api/link/request-code", async (req, res) => {
   if (!supabase) {
     res.status(500).json({ ok: false });
@@ -322,7 +473,7 @@ app.post("/api/link/request-code", async (req, res) => {
   const code = generateLinkCode();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
   const { error } = await supabase
-    .from("profiles")
+    .from("users")
     .update({ link_code: code, link_code_expires_at: expiresAt })
     .eq("email", email);
   if (error) {
@@ -346,7 +497,7 @@ app.post("/api/link/complete-code", async (req, res) => {
   }
   const nowIso = new Date().toISOString();
   const { data, error } = await supabase
-    .from("profiles")
+    .from("users")
     .select("email, plan, verifier")
     .eq("link_code", code)
     .gt("link_code_expires_at", nowIso)
@@ -370,7 +521,7 @@ app.post("/api/link/complete-code", async (req, res) => {
     return;
   }
   const { error: updateError } = await supabase
-    .from("profiles")
+    .from("users")
     .update({
       verifier: true,
       link_code: null,
@@ -425,7 +576,7 @@ app.post("/api/link/complete", async (req, res) => {
   if (supabase) {
     try {
       await supabase
-        .from("profiles")
+        .from("users")
         .update({ link_code: token, link_code_expires_at: expiresAt })
         .eq("email", email);
     } catch {}
@@ -564,8 +715,10 @@ app.get("/api/plan", async (req, res) => {
     ok: true,
     email: profile.email,
     plan: profile.plan || "basic",
-    trial: !!profile.trial,
-    plan_expires_at: profile.plan_expires_at
+    responses_remaining: profile.responses_remaining ?? 0,
+    responses_used: profile.responses_used ?? 0,
+    seconds_remaining: profile.seconds_remaining ?? 0,
+    seconds_used: profile.seconds_used ?? 0
   });
 });
 
@@ -615,10 +768,9 @@ app.post("/api/link/activate-trial", async (req, res) => {
   }
   
   try {
-    // Security 2: One-time trial check - prevent re-activation if user already used trial
     const { data: existingProfile, error: fetchErr } = await supabase
-      .from("profiles")
-      .select("trial, plan_expires_at")
+      .from("users")
+      .select("plan, seconds_remaining, seconds_used, responses_remaining")
       .eq("email", email)
       .maybeSingle();
 
@@ -626,25 +778,22 @@ app.post("/api/link/activate-trial", async (req, res) => {
       console.error(`[Trial] Check failed for ${email}:`, fetchErr.message);
     }
 
-    if (existingProfile && existingProfile.trial === true) {
+    if (existingProfile && (existingProfile.seconds_used > 0 || (existingProfile.seconds_remaining && existingProfile.seconds_remaining > 600))) {
       console.warn(`[Trial] Blocked duplicate trial claim for ${email}`);
       res.status(403).json({
         ok: false,
         error: "trial-already-claimed",
-        message: "Free trial has already been used on this account. Please upgrade to Pro to continue."
+        message: "Trial has already been used on this account."
       });
       return;
     }
 
-    // Activate trial for 10 minutes
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-    
     const { error } = await supabase
-      .from("profiles")
+      .from("users")
       .update({ 
-        trial: true,
-        plan: "trial",
-        plan_expires_at: expiresAt
+        seconds_remaining: 600,
+        responses_remaining: 5,
+        updated_at: new Date().toISOString()
       })
       .eq("email", email);
       
@@ -795,6 +944,24 @@ app.post("/api/snap", async (req, res) => {
       return;
     }
     
+    // Check if user has responses remaining
+    let userEmail = await getEmailFromAuthHeader(req);
+    if (!userEmail && req.body && req.body.email) {
+      userEmail = String(req.body.email).trim().toLowerCase();
+    }
+    let userRecord = null;
+    if (userEmail && supabase) {
+      userRecord = await fetchProfileByEmail(userEmail);
+    }
+    if (userRecord && (userRecord.responses_remaining ?? 0) <= 0) {
+      res.status(403).json({
+        text: finalText,
+        error: "insufficient-responses",
+        answer: "You have 0 AI responses remaining. Please recharge your usage balance."
+      });
+      return;
+    }
+
     // Check if OpenAI API key is configured
     if (!process.env.OPENAI_API_KEY) {
       console.log("[Snap] OpenAI API key not configured, returning text only");
@@ -833,9 +1000,25 @@ Format:
     const aiAnswer = completion.choices[0]?.message?.content?.trim() || "Could not determine answer";
     console.log("[Snap] AI answer:", aiAnswer.substring(0, 150));
     
+    // Deduct 1 response
+    if (userRecord && supabase) {
+      const newRemaining = Math.max(0, (userRecord.responses_remaining || 0) - 1);
+      const newUsed = (userRecord.responses_used || 0) + 1;
+      await supabase
+        .from("users")
+        .update({
+          responses_remaining: newRemaining,
+          responses_used: newUsed,
+          updated_at: new Date().toISOString()
+        })
+        .eq("email", userRecord.email);
+      userRecord.responses_remaining = newRemaining;
+    }
+
     res.json({
       text: finalText,
-      answer: aiAnswer
+      answer: aiAnswer,
+      responses_remaining: userRecord ? userRecord.responses_remaining : null
     });
   } catch (err) {
     console.error(`[Snap] Error: ${err.message}`);
@@ -851,38 +1034,36 @@ app.post("/api/analyze-screen", async (req, res) => {
     return res.status(400).json({ ok: false, error: "missing-image" });
   }
 
-  // Server-side plan verification: Prevent users from bypassing plan check by editing URL
-  let isPro = false;
+  // Usage Model: Verify user has AI responses remaining
+  let userEmail = "";
   if (token && typeof token === "string") {
     const session = sessions.get(token);
     const linkState = linkStates.get(token);
-    const sessionPlan = (session && session.plan) || (linkState && linkState.plan) || "";
-    
-    if (["pro", "premium", "enterprise"].includes(sessionPlan.toLowerCase())) {
-      isPro = true;
-    } else if (linkState && linkState.email && supabase) {
-      try {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("plan")
-          .eq("email", linkState.email.toLowerCase())
-          .maybeSingle();
-        if (profile && ["pro", "premium", "enterprise"].includes((profile.plan || "").toLowerCase())) {
-          isPro = true;
-        }
-      } catch (err) {
-        console.error("[Analyze-Screen] DB plan check error:", err.message);
-      }
-    }
+    if (linkState && linkState.email) userEmail = linkState.email;
+    if (!userEmail && session && session.email) userEmail = session.email;
+  }
+  if (!userEmail) {
+    userEmail = await getEmailFromAuthHeader(req);
+  }
+  if (!userEmail && req.body && req.body.email) {
+    userEmail = String(req.body.email).trim().toLowerCase();
   }
 
-  if (!isPro) {
-    console.warn(`[Analyze-Screen] 403 Forbidden: Blocked non-pro request (token: ${token ? token.substring(0, 8) + '...' : 'none'}).`);
-    return res.status(403).json({
-      ok: false,
-      error: "pro-required",
-      message: "AI Screen Analysis is available exclusively on Pro plans. Please upgrade to use this feature."
-    });
+  let userRecord = null;
+  if (userEmail && supabase) {
+    userRecord = await fetchProfileByEmail(userEmail);
+  }
+
+  if (userRecord) {
+    const remaining = userRecord.responses_remaining ?? 0;
+    if (remaining <= 0) {
+      console.warn(`[Analyze-Screen] 403 Blocked: 0 AI responses remaining for ${userEmail}`);
+      return res.status(403).json({
+        ok: false,
+        error: "insufficient-responses",
+        message: "You have 0 AI responses remaining. Please recharge your usage balance to continue."
+      });
+    }
   }
 
   // Security 3: Cooldown and Daily Quota to prevent auto-clickers / API Denial-of-Wallet
@@ -1087,7 +1268,27 @@ ${extractedText}
     }
 
     console.log("[Analyze-Screen] Final answer ready:", aiAnswer.substring(0, 100));
-    res.json({ ok: true, answer: aiAnswer, type: contentType });
+
+    if (userRecord && supabase) {
+      const newRemaining = Math.max(0, (userRecord.responses_remaining || 0) - 1);
+      const newUsed = (userRecord.responses_used || 0) + 1;
+      await supabase
+        .from("users")
+        .update({
+          responses_remaining: newRemaining,
+          responses_used: newUsed,
+          updated_at: new Date().toISOString()
+        })
+        .eq("email", userRecord.email);
+      userRecord.responses_remaining = newRemaining;
+    }
+
+    res.json({
+      ok: true,
+      answer: aiAnswer,
+      type: contentType,
+      responses_remaining: userRecord ? userRecord.responses_remaining : null
+    });
   } catch (err) {
     console.error("[Analyze-Screen] Error:", err.message);
     res.status(500).json({ ok: false, error: err.message });
@@ -1146,6 +1347,33 @@ wss.on("connection", (ws, req) => {
     if (!msg || typeof msg.type !== "string") return;
 
     if (msg.type === "hello") {
+      if (msg.email && typeof msg.email === "string") {
+        session.email = msg.email.trim().toLowerCase();
+      }
+      const linkState = linkStates.get(token);
+      if (!session.email && linkState && linkState.email) {
+        session.email = linkState.email.trim().toLowerCase();
+      }
+
+      // Check if user has connection time remaining
+      if (session.email && supabase) {
+        (async () => {
+          try {
+            const { data: u } = await supabase.from("users").select("seconds_remaining").eq("email", session.email).maybeSingle();
+            if (u && (u.seconds_remaining ?? 0) <= 0) {
+              console.log(`[Hello] User ${session.email} has 0 seconds remaining. Closing.`);
+              try {
+                ws.send(JSON.stringify({
+                  type: "peer",
+                  payload: { event: "time-expired", message: "No connection time remaining. Please recharge your balance." }
+                }));
+                ws.close(4402, "no-seconds-remaining");
+              } catch {}
+            }
+          } catch {}
+        })();
+      }
+
       if (msg.role === "desktop") {
         console.log(`[Hello] Desktop connected, token: ${token.substring(0, 8)}...`);
         if (session.desktopSocket && session.desktopSocket !== ws) {
