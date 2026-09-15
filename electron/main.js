@@ -1433,10 +1433,6 @@ ipcMain.handle("get-user-status", async () => {
   };
 });
 
-ipcMain.handle("activate-trial", async () => {
-  return false;
-});
-
 ipcMain.handle("login-with-email", async (_evt, emailRaw, forceArg) => {
   const email = typeof emailRaw === "string" ? emailRaw.trim().toLowerCase() : "";
   const force = Boolean(forceArg);
