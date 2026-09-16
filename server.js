@@ -68,16 +68,37 @@ async function fetchProfileByEmail(email) {
   try {
     const { data, error } = await supabase
       .from("users")
-      .select("id, email, plan, verifier, responses_remaining, responses_used, seconds_remaining, seconds_used, updated_at, created_at")
+      .select("id, email, plan, session_verifier, verifier, responses_remaining, responses_used, seconds_remaining, seconds_used, updated_at, created_at")
       .eq("email", emailLower)
       .maybeSingle();
 
     if (error) {
       console.error(`[Verifier] Fetch error: ${error.message}`);
+      // Fallback query without session_verifier if column doesn't exist yet
+      if (error.message && error.message.includes("session_verifier")) {
+        const { data: fbData, error: fbError } = await supabase
+          .from("users")
+          .select("id, email, plan, verifier, responses_remaining, responses_used, seconds_remaining, seconds_used, updated_at, created_at")
+          .eq("email", emailLower)
+          .maybeSingle();
+        if (!fbError && fbData) {
+          return {
+            ...fbData,
+            session_verifier: fbData.verifier || false,
+            verifier: fbData.verifier || false
+          };
+        }
+      }
       return null;
     }
 
-    if (data) return data;
+    if (data) {
+      return {
+        ...data,
+        session_verifier: data.session_verifier !== undefined ? data.session_verifier : (data.verifier || false),
+        verifier: data.session_verifier !== undefined ? data.session_verifier : (data.verifier || false)
+      };
+    }
 
     // Fallback: If user missing but exists in Auth, create user record in public.users
     console.log(`[Verifier] User missing for ${emailLower}, checking Auth...`);
@@ -100,6 +121,7 @@ async function fetchProfileByEmail(email) {
       id: user.id,
       email: emailLower,
       plan: "basic",
+      session_verifier: false,
       verifier: false,
       responses_remaining: 0,
       responses_used: 0,
@@ -122,6 +144,7 @@ async function fetchProfileByEmail(email) {
       id: user.id,
       email: emailLower,
       plan: "basic",
+      session_verifier: false,
       verifier: false,
       responses_remaining: 0,
       responses_used: 0,
@@ -140,11 +163,19 @@ async function updateProfileVerifier(email, status) {
   try {
     const { error } = await supabase
       .from("users")
-      .update({ verifier: status, updated_at: new Date().toISOString() })
+      .update({ session_verifier: status, verifier: status, updated_at: new Date().toISOString() })
       .eq("email", emailLower);
       
     if (error) {
       console.error(`[Verifier] Update failed: ${error.message}`);
+      // Fallback if session_verifier doesn't exist yet
+      if (error.message && error.message.includes("session_verifier")) {
+        const { error: fbErr } = await supabase
+          .from("users")
+          .update({ verifier: status, updated_at: new Date().toISOString() })
+          .eq("email", emailLower);
+        if (!fbErr) return true;
+      }
       return false;
     }
     return true;
@@ -411,8 +442,9 @@ app.post("/api/auth/login-email", async (req, res) => {
     });
   }
 
-  // If verifier is already true, block concurrent login unless forced
-  if (user.verifier === true && !force) {
+  // If session_verifier is already true, block concurrent login unless forced
+  const isAlreadyLoggedIn = user.session_verifier === true || user.verifier === true;
+  if (isAlreadyLoggedIn && !force) {
     return res.status(409).json({
       ok: false,
       error: "already-logged-in",
@@ -421,7 +453,7 @@ app.post("/api/auth/login-email", async (req, res) => {
     });
   }
 
-  // If verifier is false (or force login requested): set verifier = true and log in
+  // If session_verifier is false (or force login requested): set session_verifier = true and log in
   await updateProfileVerifier(email, true);
 
   return res.json({
@@ -430,6 +462,7 @@ app.post("/api/auth/login-email", async (req, res) => {
       id: user.id,
       email: user.email,
       plan: user.plan || "basic",
+      session_verifier: true,
       verifier: true,
       responses_remaining: user.responses_remaining ?? 0,
       responses_used: user.responses_used ?? 0,
@@ -490,6 +523,8 @@ app.get("/api/plan", async (req, res) => {
     ok: true,
     email: profile.email,
     plan: profile.plan || "basic",
+    session_verifier: profile.session_verifier !== undefined ? profile.session_verifier : Boolean(profile.verifier),
+    verifier: profile.session_verifier !== undefined ? profile.session_verifier : Boolean(profile.verifier),
     responses_remaining: profile.responses_remaining ?? 0,
     responses_used: profile.responses_used ?? 0,
     seconds_remaining: profile.seconds_remaining ?? 0,

@@ -221,11 +221,18 @@ async function updateProfileVerifier(email, status) {
   try {
     const { error } = await supabase
       .from("users")
-      .update({ verifier: status, updated_at: new Date().toISOString() })
+      .update({ session_verifier: status, verifier: status, updated_at: new Date().toISOString() })
       .eq("email", emailLower);
       
     if (error) {
       console.error(`[Verifier] Update failed: ${error.message}`);
+      if (error.message && error.message.includes("session_verifier")) {
+        const { error: fbErr } = await supabase
+          .from("users")
+          .update({ verifier: status, updated_at: new Date().toISOString() })
+          .eq("email", emailLower);
+        if (!fbErr) return true;
+      }
       return false;
     }
     return true;
@@ -986,16 +993,37 @@ async function fetchProfileByEmail(email, { skipCache = false } = {}) {
     try {
       const { data, error } = await supabase
         .from("users")
-        .select("id, email, plan, verifier, responses_remaining, responses_used, seconds_remaining, seconds_used, updated_at, created_at")
+        .select("id, email, plan, session_verifier, verifier, responses_remaining, responses_used, seconds_remaining, seconds_used, updated_at, created_at")
         .eq("email", emailLower)
         .maybeSingle();
 
       if (error) {
         console.warn(`[Verifier] Fetch error: ${error.message}`);
+        if (error.message && error.message.includes("session_verifier")) {
+          const { data: fbData, error: fbError } = await supabase
+            .from("users")
+            .select("id, email, plan, verifier, responses_remaining, responses_used, seconds_remaining, seconds_used, updated_at, created_at")
+            .eq("email", emailLower)
+            .maybeSingle();
+          if (!fbError && fbData) {
+            const mapped = {
+              ...fbData,
+              session_verifier: fbData.verifier || false,
+              verifier: fbData.verifier || false
+            };
+            setCachedProfile(emailLower, mapped);
+            return mapped;
+          }
+        }
       } else if (data) {
-        console.log(`[Verifier] User found for ${emailLower}. Plan: ${data.plan}, Responses: ${data.responses_remaining}, Seconds: ${data.seconds_remaining}`);
-        setCachedProfile(emailLower, data);
-        return data;
+        const mapped = {
+          ...data,
+          session_verifier: data.session_verifier !== undefined ? data.session_verifier : (data.verifier || false),
+          verifier: data.session_verifier !== undefined ? data.session_verifier : (data.verifier || false)
+        };
+        console.log(`[Verifier] User found for ${emailLower}. Plan: ${mapped.plan}, Responses: ${mapped.responses_remaining}, Seconds: ${mapped.seconds_remaining}`);
+        setCachedProfile(emailLower, mapped);
+        return mapped;
       } else {
         // Fallback: Check Auth if user missing from public.users
         try {
@@ -1007,6 +1035,7 @@ async function fetchProfileByEmail(email, { skipCache = false } = {}) {
                 id: authUser.id,
                 email: emailLower,
                 plan: "basic",
+                session_verifier: false,
                 verifier: false,
                 responses_remaining: 0,
                 responses_used: 0,
@@ -1048,7 +1077,8 @@ async function fetchProfileByEmail(email, { skipCache = false } = {}) {
            responses_used: res.responses_used ?? 0,
            seconds_remaining: res.seconds_remaining ?? 0,
            seconds_used: res.seconds_used ?? 0,
-           verifier: Boolean(res.verifier) 
+           session_verifier: res.session_verifier !== undefined ? Boolean(res.session_verifier) : Boolean(res.verifier),
+           verifier: res.session_verifier !== undefined ? Boolean(res.session_verifier) : Boolean(res.verifier) 
         };
         setCachedProfile(emailLower, profile);
         return profile;
@@ -1136,8 +1166,9 @@ async function startLocalBridgeServer() {
       return;
     }
 
-    if (profile.verifier === true) {
-      console.warn(`[Link] Login blocked: ${email} already logged in (verifier=true).`);
+    const isAlreadyLoggedIn = profile.session_verifier === true || profile.verifier === true;
+    if (isAlreadyLoggedIn) {
+      console.warn(`[Link] Login blocked: ${email} already logged in (session_verifier=true).`);
       res.status(409).json({ ok: false, error: "already-logged-in" });
       return;
     }
@@ -1487,7 +1518,8 @@ ipcMain.handle("login-with-email", async (_evt, emailRaw, forceArg) => {
       return { ok: false, error: "user-not-found", message: "Account not found. Please register on the website first." };
     }
 
-    if (profile.verifier === true && !force) {
+    const isAlreadyActive = profile.session_verifier === true || profile.verifier === true;
+    if (isAlreadyActive && !force) {
       return {
         ok: false,
         error: "already-logged-in",
@@ -1535,6 +1567,7 @@ ipcMain.handle("login-with-email", async (_evt, emailRaw, forceArg) => {
     user: {
       email: profile.email,
       plan: profile.plan || "basic",
+      session_verifier: true,
       verifier: true,
       responses_remaining: profile.responses_remaining ?? 0,
       responses_used: profile.responses_used ?? 0,
